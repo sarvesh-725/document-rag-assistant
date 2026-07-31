@@ -34,3 +34,9 @@ coverage.xml
 
 # Log files
 *.log
+
+# AI and Unnecessary Files
+AGENTS.md
+CLAUDE.md
+PROJECT_WALKTHROUGH.md
+requirements
