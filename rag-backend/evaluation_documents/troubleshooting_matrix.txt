@@ -1,0 +1,599 @@
+Issue 1 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR1
+
+Issue 2 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR2
+
+Issue 3 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR3
+
+Issue 4 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR4
+
+Issue 5 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR5
+
+Issue 6 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR6
+
+Issue 7 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR7
+
+Issue 8 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR8
+
+Issue 9 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR9
+
+Issue 10 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR10
+
+Issue 11 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR11
+
+Issue 12 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR12
+
+Issue 13 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR13
+
+Issue 14 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR14
+
+Issue 15 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR15
+
+Issue 16 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR16
+
+Issue 17 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR17
+
+Issue 18 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR18
+
+Issue 19 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR19
+
+Issue 20 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR20
+
+Issue 21 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR21
+
+Issue 22 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR22
+
+Issue 23 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR23
+
+Issue 24 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR24
+
+Issue 25 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR25
+
+Issue 26 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR26
+
+Issue 27 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR27
+
+Issue 28 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR28
+
+Issue 29 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR29
+
+Issue 30 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR30
+
+Issue 31 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR31
+
+Issue 32 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR32
+
+Issue 33 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR33
+
+Issue 34 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR34
+
+Issue 35 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR35
+
+Issue 36 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR36
+
+Issue 37 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR37
+
+Issue 38 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR38
+
+Issue 39 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR39
+
+Issue 40 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR40
+
+Issue 41 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR41
+
+Issue 42 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR42
+
+Issue 43 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR43
+
+Issue 44 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR44
+
+Issue 45 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR45
+
+Issue 46 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR46
+
+Issue 47 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR47
+
+Issue 48 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR48
+
+Issue 49 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR49
+
+Issue 50 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR50
+
+Issue 51 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR51
+
+Issue 52 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR52
+
+Issue 53 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR53
+
+Issue 54 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR54
+
+Issue 55 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR55
+
+Issue 56 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR56
+
+Issue 57 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR57
+
+Issue 58 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR58
+
+Issue 59 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR59
+
+Issue 60 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR60
+
+Issue 61 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR61
+
+Issue 62 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR62
+
+Issue 63 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR63
+
+Issue 64 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR64
+
+Issue 65 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR65
+
+Issue 66 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR66
+
+Issue 67 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR67
+
+Issue 68 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR68
+
+Issue 69 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR69
+
+Issue 70 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR70
+
+Issue 71 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR71
+
+Issue 72 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR72
+
+Issue 73 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR73
+
+Issue 74 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR74
+
+Issue 75 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR75
+
+Issue 76 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR76
+
+Issue 77 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR77
+
+Issue 78 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR78
+
+Issue 79 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR79
+
+Issue 80 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR80
+
+Issue 81 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR81
+
+Issue 82 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR82
+
+Issue 83 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR83
+
+Issue 84 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR84
+
+Issue 85 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR85
+
+Issue 86 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR86
+
+Issue 87 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR87
+
+Issue 88 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR88
+
+Issue 89 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR89
+
+Issue 90 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR90
+
+Issue 91 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR91
+
+Issue 92 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR92
+
+Issue 93 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR93
+
+Issue 94 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR94
+
+Issue 95 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR95
+
+Issue 96 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR96
+
+Issue 97 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR97
+
+Issue 98 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR98
+
+Issue 99 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR99
+
+Issue 100 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR100
+
+Issue 101 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR101
+
+Issue 102 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR102
+
+Issue 103 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR103
+
+Issue 104 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR104
+
+Issue 105 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR105
+
+Issue 106 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR106
+
+Issue 107 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR107
+
+Issue 108 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR108
+
+Issue 109 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR109
+
+Issue 110 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR110
+
+Issue 111 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR111
+
+Issue 112 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR112
+
+Issue 113 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR113
+
+Issue 114 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR114
+
+Issue 115 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR115
+
+Issue 116 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR116
+
+Issue 117 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR117
+
+Issue 118 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR118
+
+Issue 119 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR119
+
+Issue 120 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR120
+
+Issue 121 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR121
+
+Issue 122 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR122
+
+Issue 123 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR123
+
+Issue 124 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR124
+
+Issue 125 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR125
+
+Issue 126 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR126
+
+Issue 127 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR127
+
+Issue 128 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR128
+
+Issue 129 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR129
+
+Issue 130 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR130
+
+Issue 131 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR131
+
+Issue 132 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR132
+
+Issue 133 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR133
+
+Issue 134 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR134
+
+Issue 135 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR135
+
+Issue 136 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR136
+
+Issue 137 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR137
+
+Issue 138 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR138
+
+Issue 139 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR139
+
+Issue 140 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR140
+
+Issue 141 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR141
+
+Issue 142 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR142
+
+Issue 143 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR143
+
+Issue 144 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR144
+
+Issue 145 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR145
+
+Issue 146 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR146
+
+Issue 147 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR147
+
+Issue 148 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR148
+
+Issue 149 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR149
+
+Issue 150 :: sysem wont start maybe?? check powr cable then reboot
+ -if led off replace psu
+*logs missing   retry 3 times,,, code ERR150

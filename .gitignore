@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.env
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Next.js
+.next/
+out/
+build/
+
+# IDEs and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Local custom paths and data
+UPLOADS/
+chroma_db/
+rag-prototype/
+rag-prototype/chroma_db/
+rag-prototype/sample.pdf
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Log files
+*.log
