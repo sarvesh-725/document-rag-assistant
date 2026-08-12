@@ -1,20 +1,24 @@
 import logging
-import hashlib
+import uuid
 from contextlib import asynccontextmanager
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Query, status
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.services import rag_engine
 from app.routers.documents import router as documents_router
 from app.routers.chat import router as chat_router
 from app.database.connection import get_db, engine, Base
-from app.database.models import User, ChatSession, SessionFile
+from app.database.models import User, ChatSession, Message
+from app.database.enums import MessageRole, MessageStatus
 from app.auth.security import get_current_user, verify_password, get_password_hash, create_access_token
+from app.database.repositories import (
+    create_user, get_user_by_username, list_user_sessions,
+    create_session, soft_delete_session, get_session_by_id, get_session_messages
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -32,15 +36,12 @@ async def lifespan(app: FastAPI):
     taskiq_fastapi.init(broker, "app.main:app")
     if not broker.is_worker_process:
         await broker.startup()
-        
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        
+
     # Train the hybrid intent router in memory
     train_classifier()
-        
+
     yield
-    
+
     if not broker.is_worker_process:
         await broker.shutdown()
     await engine.dispose()
@@ -49,7 +50,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RAG Document Assistant Server",
     description="FastAPI Web Server for RAG (Retrieval-Augmented Generation) document search",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -70,17 +71,13 @@ class UserSignupRequest(BaseModel):
     password: str = Field(..., min_length=6)
 
 
-class QueryRequest(BaseModel):
-    question: str
-    session_id: str
-    include_prev_files: bool = True
-    explicit_files: List[str] = Field(default_factory=list)
-
-
 class NewSessionRequest(BaseModel):
-    session_id: str
+    title: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
 
 @app.post("/api/v1/auth/signup", status_code=status.HTTP_201_CREATED)
 async def signup(request: UserSignupRequest, db: AsyncSession = Depends(get_db)):
@@ -92,8 +89,7 @@ async def signup(request: UserSignupRequest, db: AsyncSession = Depends(get_db))
             detail="Username cannot be empty or whitespace."
         )
 
-    result = await db.execute(select(User).where(User.username == username_clean))
-    existing_user = result.scalars().first()
+    existing_user = await get_user_by_username(db, username_clean)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -107,12 +103,11 @@ async def signup(request: UserSignupRequest, db: AsyncSession = Depends(get_db))
         )
 
     hashed_password = get_password_hash(request.password)
-    new_user = User(username=username_clean, hashed_password=hashed_password)
-    db.add(new_user)
+    new_user = await create_user(db, username_clean, hashed_password)
     await db.commit()
     await db.refresh(new_user)
 
-    return {"status": "success", "message": "User created successfully", "user_id": new_user.id}
+    return {"status": "success", "message": "User created successfully", "user_id": str(new_user.id)}
 
 
 @app.post("/api/v1/auth/login")
@@ -122,8 +117,7 @@ async def login(
 ):
     """Authenticates credentials and returns a JWT access token."""
     username_clean = form_data.username.strip()
-    result = await db.execute(select(User).where(User.username == username_clean))
-    user = result.scalars().first()
+    user = await get_user_by_username(db, username_clean)
 
     if len(form_data.password.encode('utf-8')) > 72:
         raise HTTPException(
@@ -142,61 +136,49 @@ async def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+# ---------------------------------------------------------------------------
+# Session routes
+# ---------------------------------------------------------------------------
 
-@app.get("/api/v1/sessions", response_model=List[str])
+@app.get("/api/v1/sessions")
 async def get_user_sessions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Returns a list of active session IDs for the authenticated user.
-    Enforces strict tenant isolation.
+    Returns a list of active sessions for the authenticated user.
+    Only returns non-deleted sessions.
     """
-    result = await db.execute(
-        select(ChatSession).where(ChatSession.user_id == current_user.id)
-    )
-    sessions = result.scalars().all()
-    return [session.id for session in sessions]
+    sessions = await list_user_sessions(db, current_user.id)
+    return [
+        {
+            "id": str(s.id),
+            "title": s.title,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in sessions
+    ]
 
 
-@app.post("/api/v1/sessions/new")
+@app.post("/api/v1/sessions/new", status_code=status.HTTP_201_CREATED)
 async def create_new_session(
     request: NewSessionRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Force-initializes a fresh session canvas for the authenticated user.
-    Deletes any existing session with the same session_id to maintain clean state.
+    Creates a fresh chat session with a server-generated UUID.
     """
-    session_id = request.session_id.strip()
-    if not session_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Session ID string cannot be empty or whitespace."
-        )
-
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id
-        )
-    )
-    existing_session = result.scalars().first()
-    if existing_session:
-        await db.delete(existing_session)
-        await db.commit()
-
-    new_session = ChatSession(
-        id=session_id,
-        user_id=current_user.id,
-        session_name=session_id,
-        messages=[]
-    )
-    db.add(new_session)
+    new_session = await create_session(db, current_user.id, request.title or "New Conversation")
     await db.commit()
+    await db.refresh(new_session)
 
-    return {"status": "success", "user_id": current_user.id, "session_id": session_id}
+    return {
+        "status": "success",
+        "user_id": str(current_user.id),
+        "session_id": str(new_session.id),
+        "title": new_session.title,
+    }
 
 
 @app.delete("/api/v1/sessions/{session_id}")
@@ -206,101 +188,25 @@ async def delete_session(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Deletes the session and cascaded files. Purges vector data if no other session uses it.
+    Soft-deletes the session by setting deleted_at.
     """
-    import os
-    import re
-    from app.services.rag_engine import delete_file_from_db
-
-    session_id = session_id.strip()
-
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid session ID format. Must be a valid UUID."
         )
-    )
-    chat_session = result.scalars().first()
-    if not chat_session:
+
+    deleted = await soft_delete_session(db, session_uuid, current_user.id)
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or unauthorized"
         )
-
-    file_result = await db.execute(
-        select(SessionFile).where(SessionFile.session_id == session_id)
-    )
-    session_files = file_result.scalars().all()
-    filenames_to_purge = [f.filename for f in session_files]
-
-    await db.delete(chat_session)
+    
     await db.commit()
-
-    celery_upload_dir = os.getenv("CELERY_UPLOAD_DIR", "UPLOADS")
-    for filename in filenames_to_purge:
-        try:
-            stmt = select(SessionFile).join(ChatSession).where(
-                ChatSession.user_id == current_user.id,
-                SessionFile.filename == filename
-            )
-            other_res = await db.execute(stmt)
-            if not other_res.scalars().first():
-                await delete_file_from_db(str(current_user.id), filename)
-                logger.info(f"Purged vector chunks from Qdrant for '{filename}'")
-        except Exception as q_err:
-            logger.error(f"Error purging Qdrant vectors for '{filename}' on session delete: {q_err}")
-
-        try:
-            safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', filename)
-            temp_filename = f"temp_{current_user.id}_{session_id}_{safe_filename}"
-            temp_file_path = os.path.join(celery_upload_dir, temp_filename)
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-                logger.info(f"Cleaned up local file: {temp_file_path}")
-        except Exception as file_err:
-            logger.error(f"Error removing temp file for '{filename}': {file_err}")
-
-    return {"status": "success", "message": f"Successfully deleted session '{session_id}' and clean up resources."}
-
-
-
-
-@app.get("/api/v1/sessions/files")
-async def get_session_files(
-    session_id: str = Query(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Returns a list of all document files uploaded inside the target session.
-    """
-    session_result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id
-        )
-    )
-    chat_session = session_result.scalars().first()
-    if not chat_session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or unauthorized"
-        )
-
-    result = await db.execute(
-        select(SessionFile).where(SessionFile.session_id == session_id)
-    )
-    files = result.scalars().all()
-    return [
-        {
-            "filename": f.filename,
-            "file_hash": f.file_hash,
-            "is_committed": f.is_committed,
-            "just_uploaded": f.just_uploaded,
-            "status": f.status
-        }
-        for f in files
-    ]
+    return {"status": "success", "message": f"Session '{session_id}' soft-deleted."}
 
 
 @app.get("/api/v1/sessions/{session_id}/history")
@@ -311,28 +217,61 @@ async def get_session_history(
 ):
     """
     Returns the chat message history for the target session.
+    Messages are individual rows ordered by sequence_number.
     """
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid session ID format."
         )
-    )
-    chat_session = result.scalars().first()
+
+    chat_session = await get_session_by_id(db, session_uuid, current_user.id)
     if not chat_session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found or unauthorized"
         )
-    return chat_session.messages
+
+    messages = await get_session_messages(db, session_uuid)
+
+    return [
+        {
+            "id": str(m.id),
+            "sequence_number": m.sequence_number,
+            "role": m.role,
+            "content": m.content,
+            "status": m.status,
+            "selected_document_snapshot": m.selected_document_snapshot,
+            "sources": m.sources,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in messages
+    ]
 
 
+# ---------------------------------------------------------------------------
+# Stubbed routes (pending Phase 2 rewrite)
+# ---------------------------------------------------------------------------
 
+@app.get("/api/v1/sessions/files")
+async def get_session_files_stub(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    STUB: SessionFile has been removed. Documents are now global.
+    This endpoint will be replaced in Phase 2.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Route pending Phase 2 rewrite. SessionFile model removed. Use /api/v1/documents/global instead."
+    )
 
 
 @app.get("/")
 def read_root():
-    return {"status": "running", "message": "Welcome to the RAG Document Assistant API"}
+    return {"status": "running", "message": "Welcome to the RAG Document Assistant API", "version": "2.0.0"}
 
 
 if __name__ == "__main__":
