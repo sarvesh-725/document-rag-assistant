@@ -30,8 +30,6 @@ export default function SelectedFilesBar({
         {files.map((file) => {
           const isProcessing = file.status === 'processing';
           const isFailed = file.status === 'failed';
-          const isJustUploaded = file.just_uploaded;
-
           return (
             <div
               key={file.filename}
@@ -70,20 +68,11 @@ export default function SelectedFilesBar({
                     Remove
                   </button>
                 </div>
-              ) : isJustUploaded ? (
-                <button
-                  onClick={() => onDelete(file.filename)}
-                  className="flex items-center gap-0.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded px-1.5 py-0.5 transition-colors cursor-pointer text-[10px]"
-                  title="Delete file entirely from system indexes"
-                >
-                  <Undo2 size={10} />
-                  Undo
-                </button>
               ) : (
                 <button
                   onClick={() => onUnbind(file.filename)}
                   className="text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-700 transition-colors cursor-pointer"
-                  title="Unselect file (move back to global list)"
+                  title="Unselect file"
                 >
                   <X size={12} />
                 </button>

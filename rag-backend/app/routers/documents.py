@@ -9,22 +9,13 @@ from sqlalchemy import select
 from app.database.connection import get_db
 from app.database.models import User, ChatSession, SessionFile
 from app.auth.security import get_current_user
-from app.tasks.celery_worker import async_process_document_task
+from app.tasks.taskiq_worker import async_process_document_task
 
 logger = logging.getLogger("documents_router")
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 CELERY_UPLOAD_DIR = os.getenv("CELERY_UPLOAD_DIR", "UPLOADS")
 
-
-class BindFileRequest(BaseModel):
-    session_id: str
-    filename: str
-
-
-class UnbindFileRequest(BaseModel):
-    session_id: str
-    filename: str
 
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
@@ -39,6 +30,8 @@ async def upload_document(
     inserts a 'processing' state record into SessionFile table,
     and dispatches ingestion worker task.
     """
+    # Validates that a file was actually provided in the request
+    # Needed because the endpoint expects a file for upload, and proceeding without one would cause errors later.
     if not file:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -47,6 +40,8 @@ async def upload_document(
     filename = file.filename
     content_type = file.content_type
 
+    # Validates that the session ID is present and not just empty spaces
+    # Needed because files must be associated with a specific, valid chat session.
     session_id = session_id.strip()
     if not session_id:
         raise HTTPException(
@@ -54,6 +49,8 @@ async def upload_document(
             detail="Session ID string cannot be empty or whitespace."
         )
 
+    # Checks if the uploaded file's extension or content type matches accepted formats (PDF or Text)
+    # Needed to ensure only supported document types are processed by the RAG system, preventing ingestion errors.
     is_pdf = filename.lower().endswith(".pdf") or content_type == "application/pdf"
     is_txt = filename.lower().endswith((".txt", ".text")) or content_type == "text/plain"
 
@@ -66,6 +63,8 @@ async def upload_document(
             detail="Invalid file type. Only PDF and TXT (text) files are accepted.",
         )
 
+    # Verifies that the chat session exists and belongs to the currently authenticated user
+    # Needed for security and access control, ensuring users can only upload files to their own active sessions.
     session_result = await db.execute(
         select(ChatSession).where(
             ChatSession.id == session_id,
@@ -79,17 +78,23 @@ async def upload_document(
             detail="Session not found or unauthorized"
         )
 
+    # Ensures the directory for storing uploaded files temporarily before Celery processing exists
     os.makedirs(CELERY_UPLOAD_DIR, exist_ok=True)
 
+    # Generates a safe and unique temporary filename using user ID and session ID
+    # Needed to avoid filename collisions if multiple users upload files with the same name, and prevents path traversal attacks.
     safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', filename)
     temp_filename = f"temp_{current_user.id}_{session_id}_{safe_filename}"
     temp_file_path = os.path.join(CELERY_UPLOAD_DIR, temp_filename)
 
     try:
+        # Saves the uploaded file content from the API request to the local temporary file path
+        # Needed so the background Celery worker can access the physical file for ingestion.
         with open(temp_file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
 
+        # Checks if this exact file is already associated with the current session
         file_query = await db.execute(
             select(SessionFile).where(
                 SessionFile.session_id == session_id,
@@ -98,6 +103,8 @@ async def upload_document(
         )
         session_file = file_query.scalars().first()
 
+        # Updates or creates the database record for this file in the current session, setting its status to 'processing'
+        # Needed to track the file's ingestion state in the UI before the background worker finishes processing it.
         if not session_file:
             session_file = SessionFile(
                 session_id=session_id,
@@ -117,7 +124,9 @@ async def upload_document(
 
         await db.commit()
 
-        task = async_process_document_task.delay(
+        # Dispatches a background Taskiq task to process and ingest the document asynchronously
+        # Needed to prevent the API request from blocking while a potentially large document is being vectorized.
+        task = await async_process_document_task.kiq(
             temp_file_path,
             filename,
             current_user.id,
@@ -127,7 +136,7 @@ async def upload_document(
         return {
             "status": "processing",
             "message": "Ingestion started in background",
-            "task_id": task.id
+            "task_id": task.task_id
         }
 
     except Exception as e:
@@ -149,6 +158,8 @@ async def get_global_documents(
     Returns an array of all unique file rows ever indexed under the authenticated user's ID
     that have a status of "completed".
     """
+    # Queries the database for all files associated with any of the user's sessions that have finished processing
+    # Needed to fetch the user's entire document history so they can re-use previously uploaded files.
     stmt = select(SessionFile).join(ChatSession).where(
         ChatSession.user_id == current_user.id,
         SessionFile.status == "completed"
@@ -156,6 +167,8 @@ async def get_global_documents(
     res = await db.execute(stmt)
     files = res.scalars().all()
 
+    # Deduplicates the file list based on filename, keeping the latest status
+    # Needed because the same file might be bound to multiple sessions, but we only want to show it once in the global list.
     unique_files = {}
     for f in files:
         if f.filename not in unique_files:
@@ -169,124 +182,6 @@ async def get_global_documents(
 
     return list(unique_files.values())
 
-
-@router.post("/bind")
-async def bind_document(
-    request: BindFileRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Binds a completed historical document to the active chat session.
-    """
-    session_id = request.session_id.strip()
-    filename = request.filename.strip()
-
-    session_result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id
-        )
-    )
-    chat_session = session_result.scalars().first()
-    if not chat_session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or unauthorized"
-        )
-
-    stmt = select(SessionFile).join(ChatSession).where(
-        ChatSession.user_id == current_user.id,
-        SessionFile.filename == filename,
-        SessionFile.status == "completed"
-    )
-    file_result = await db.execute(stmt)
-    existing_file = file_result.scalars().first()
-    if not existing_file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Completed file not found in user history"
-        )
-
-    stmt = select(SessionFile).where(
-        SessionFile.session_id == session_id,
-        SessionFile.filename == filename
-    )
-    assoc_result = await db.execute(stmt)
-    assoc = assoc_result.scalars().first()
-
-    if not assoc:
-        assoc = SessionFile(
-            session_id=session_id,
-            filename=filename,
-            file_hash=existing_file.file_hash,
-            is_committed=True,
-            just_uploaded=False,
-            status="completed"
-        )
-        db.add(assoc)
-    else:
-        assoc.is_committed = True
-        assoc.just_uploaded = False
-        assoc.status = "completed"
-        db.add(assoc)
-
-    await db.commit()
-
-    return {
-        "status": "success",
-        "message": f"Successfully bound file '{filename}' to session '{session_id}'",
-        "file": {
-            "filename": assoc.filename,
-            "file_hash": assoc.file_hash,
-            "is_committed": assoc.is_committed,
-            "just_uploaded": assoc.just_uploaded,
-            "status": assoc.status
-        }
-    }
-
-
-@router.post("/unbind")
-async def unbind_document(
-    request: UnbindFileRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Unbinds/unselects a document from the active chat session.
-    """
-    session_id = request.session_id.strip()
-    filename = request.filename.strip()
-
-    session_result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id
-        )
-    )
-    chat_session = session_result.scalars().first()
-    if not chat_session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or unauthorized"
-        )
-
-    stmt = select(SessionFile).where(
-        SessionFile.session_id == session_id,
-        SessionFile.filename == filename
-    )
-    assoc_result = await db.execute(stmt)
-    assoc = assoc_result.scalars().first()
-    if assoc:
-        assoc.is_committed = False
-        assoc.just_uploaded = False
-        db.add(assoc)
-        await db.commit()
-
-    return {
-        "status": "success",
-        "message": f"Successfully unbound file '{filename}' from session '{session_id}'"
-    }
 
 
 @router.delete("/sessions/{session_id}/files/{filename}")
@@ -302,6 +197,8 @@ async def delete_document(
     session_id = session_id.strip()
     filename = filename.strip()
 
+    # Verifies that the target chat session exists and belongs to the user
+    # Needed for security, confirming the user has rights to delete from this session context.
     session_result = await db.execute(
         select(ChatSession).where(
             ChatSession.id == session_id,
@@ -315,6 +212,8 @@ async def delete_document(
             detail="Session not found or unauthorized"
         )
 
+    # Finds all database records of this file across all of the user's sessions and deletes them
+    # Needed to completely remove the file's metadata from the user's history and all chats.
     stmt = select(SessionFile).join(ChatSession).where(
         ChatSession.user_id == current_user.id,
         SessionFile.filename == filename
@@ -326,12 +225,16 @@ async def delete_document(
         await db.delete(f)
     await db.commit()
 
+    # Calls an external service function to remove the document's embeddings from the vector database (Qdrant)
+    # Needed because deleting the SQL records doesn't remove the actual vector data used for search/RAG.
     from app.services.rag_engine import delete_file_from_db
     try:
         await delete_file_from_db(str(current_user.id), filename)
     except Exception as q_err:
         logger.error(f"Error purging Qdrant vectors for '{filename}': {q_err}")
 
+    # Attempts to delete the temporary physical file from the local file system if it still exists
+    # Needed for cleanup to prevent disk space exhaustion from orphaned temporary files.
     safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', filename)
     temp_filename = f"temp_{current_user.id}_{session_id}_{safe_filename}"
     temp_file_path = os.path.join(CELERY_UPLOAD_DIR, temp_filename)

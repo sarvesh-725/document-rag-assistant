@@ -18,6 +18,8 @@ from langchain_core.documents import Document
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.services.intent_classifier import classify_intent
+
 load_dotenv(override=True)
 
 QDRANT_ENDPOINT = os.getenv("QDRANT_ENDPOINT")
@@ -127,13 +129,15 @@ async def init_qdrant():
         print(f"Failed to check or initialize Qdrant collection: {e}")
 
 
+from langchain_text_splitters import TokenTextSplitter
+
 async def process_and_store_document(
     file_bytes: bytes, filename: str, user_id: str
 ) -> int:
     """
     Takes raw file bytes from an upload, parses the text using unstructured,
-    generates an MD5 hash of the bytes, chunks the text, generates embeddings,
-    and saves them to Qdrant Cloud. Returns the number of chunks processed.
+    generates an MD5 hash of the bytes, chunks the text into Parent and Child chunks,
+    generates embeddings for Children, and saves them to Qdrant Cloud.
     """
     if not file_bytes:
         raise ValueError("File content is empty.")
@@ -147,8 +151,8 @@ async def process_and_store_document(
             file=io.BytesIO(file_bytes),
             api_key=os.environ.get("UNSTRUCTURED_API_KEY"),
             url=os.environ.get("UNSTRUCTURED_API_URL"),
-            partition_via_api=True,  # Forces processing on Unstructured's cloud servers
-            strategy="hi_res",  # Cloud handles high-res layout analysis
+            partition_via_api=True,
+            strategy="hi_res",
         )
         docs = loader.load()
         text = "\n\n".join([doc.page_content for doc in docs])
@@ -157,14 +161,26 @@ async def process_and_store_document(
     except Exception as e:
         raise RuntimeError(f"Error parsing document with Unstructured loader: {e}")
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=80)
-    chunks = splitter.split_text(text)
+    # Parent-Child Chunking Strategy
+    parent_splitter = TokenTextSplitter(chunk_size=1024, chunk_overlap=100)
+    child_splitter = TokenTextSplitter(chunk_size=128, chunk_overlap=20)
 
-    if not chunks:
+    parents = parent_splitter.split_text(text)
+    
+    child_chunks = []
+    parent_texts = []
+    
+    for parent in parents:
+        children = child_splitter.split_text(parent)
+        for child in children:
+            child_chunks.append(child)
+            parent_texts.append(parent)
+
+    if not child_chunks:
         return 0
 
     embeddings = _get_embeddings()
-    embeddings_list = embeddings.embed_documents(chunks)
+    embeddings_list = embeddings.embed_documents(child_chunks)
 
     try:
         purge_filter = qdrant_models.Filter(
@@ -190,7 +206,7 @@ async def process_and_store_document(
         print(f"Qdrant cleanup of outdated chunks failed or was empty: {e}")
 
     points = []
-    for i, (chunk, vector) in enumerate(zip(chunks, embeddings_list)):
+    for i, (child, parent, vector) in enumerate(zip(child_chunks, parent_texts, embeddings_list)):
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_hash}_{i}"))
 
         payload = {
@@ -199,14 +215,17 @@ async def process_and_store_document(
             "file_hash": file_hash,
             "source": filename,
             "chunk_id": i,
-            "text": chunk,
+            "text": child,
+            "child_text": child,
+            "parent_text": parent,
+            "intent_tag": "knowledge"
         }
 
         points.append(PointStruct(id=point_id, vector=vector, payload=payload))
 
     await client.upsert(collection_name=QDRANT_COLLECTION_NAME, points=points)
 
-    return len(chunks)
+    return len(child_chunks)
 
 
 async def query_rag_system(
@@ -220,7 +239,7 @@ async def query_rag_system(
     """
     Takes a user query, retrieves relevant chunks from Qdrant based on session/explicit files,
     constructs the prompt template including sliding window memory,
-    sends it to gemini-3.1-flash-lite, saves history to DB, and returns the final answer text.
+    sends it to gemini-2.5-flash, saves history to DB, and returns the final answer text.
     """
     if not question.strip():
         raise ValueError("Question cannot be empty.")
@@ -274,44 +293,60 @@ async def query_rag_system(
     query_vector = embeddings.embed_query(question)
 
     await init_qdrant()
-
-    try:
-        search_result = await client.query_points(
-            collection_name=QDRANT_COLLECTION_NAME,
-            query=query_vector,
-            query_filter=search_filter,
-            limit=10,
-        )
-    except Exception as e:
-        raise ValueError(
-            f"Could not query Qdrant collection '{QDRANT_COLLECTION_NAME}'. Has ingestion been run? Detail: {e}"
-        )
-
-    documents = [
-        hit.payload.get("text", "") for hit in search_result.points if hit.payload
-    ]
-    if not documents:
+    
+    intent = classify_intent(question)
+    
+    if intent == "chitchat":
+        # Fall back to empty documents and conversational response
+        documents = []
+    else:
+        try:
+            search_result = await client.query_points(
+                collection_name=QDRANT_COLLECTION_NAME,
+                query=query_vector,
+                query_filter=search_filter,
+                limit=15,
+            )
+        except Exception as e:
+            raise ValueError(
+                f"Could not query Qdrant collection '{QDRANT_COLLECTION_NAME}'. Has ingestion been run? Detail: {e}"
+            )
+    
+        valid_hits = [hit for hit in search_result.points if hit.payload and hit.score >= 0.60]
+        
+        documents = []
+        for hit in valid_hits:
+            if intent == "knowledge_specific":
+                text_content = hit.payload.get("child_text", hit.payload.get("text", ""))
+            else:
+                text_content = hit.payload.get("parent_text", hit.payload.get("text", ""))
+            documents.append(text_content)
+            
+    if not documents and intent != "chitchat":
         for f in session_files:
             if f.just_uploaded:
                 f.just_uploaded = False
                 f.is_committed = True
         db.add_all(session_files)
         await db.commit()
-        return "I cannot find the answer in the provided documents."
+        return "I can only answer questions related to our documents. The document does not contain this information."
 
-    retrieved_docs = [Document(page_content=doc) for doc in documents]
-
-    try:
-        reranker = CohereRerank(model="rerank-english-v3.0", top_n=5)
-        ranked_docs = reranker.compress_documents(retrieved_docs, question)
-        context_docs = [doc.page_content for doc in ranked_docs]
-    except Exception as cohere_err:
-        print(
-            f"Cohere Reranker failed: {cohere_err}. Falling back to top 5 initial Qdrant results."
-        )
-        context_docs = documents[:5]
-
-    context = "\n\n".join(context_docs)
+    if documents:
+        retrieved_docs = [Document(page_content=doc) for doc in documents]
+    
+        try:
+            reranker = CohereRerank(model="rerank-english-v3.0", top_n=5)
+            ranked_docs = reranker.compress_documents(retrieved_docs, question)
+            context_docs = [doc.page_content for doc in ranked_docs]
+        except Exception as cohere_err:
+            print(
+                f"Cohere Reranker failed: {cohere_err}. Falling back to top 5 initial Qdrant results."
+            )
+            context_docs = documents[:5]
+    
+        context = "\n\n---\n\n".join(context_docs)
+    else:
+        context = ""
 
     db_messages = chat_session.messages
     langchain_messages = messages_from_dict(db_messages)
@@ -323,15 +358,18 @@ async def query_rag_system(
 
     model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
 
+    if intent != "chitchat":
+        system_prompt = (
+            "Answer using ONLY the provided context. If the answer is not in the text, "
+            "reply 'The document does not contain this information.' Do not use outside knowledge.\n\n"
+            "Context:\n{context}"
+        )
+    else:
+        system_prompt = "You are a helpful assistant. Answer the user's question conversationally."
+
     prompt = ChatPromptTemplate.from_messages(
         [
-            (
-                "system",
-                "You are a helpful assistant. Answer the user's question using ONLY the provided context and the conversation history. "
-                "If the answer cannot be found in the context or history, say 'I cannot find the answer in the provided documents.' "
-                "Do not make things up.\n\n"
-                "Context:\n{context}",
-            ),
+            ("system", system_prompt),
             *trimmed_messages,
             ("human", "{query}"),
         ]

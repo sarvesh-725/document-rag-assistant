@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-connect_args = {}
+connect_args = {"timeout": 60}
 if "?" in DATABASE_URL:
     parsed_url = urlparse(DATABASE_URL)
     query_params = parse_qs(parsed_url.query)

@@ -22,11 +22,27 @@ logging.basicConfig(
 logger = logging.getLogger("rag_server")
 
 
+from app.broker import broker
+import taskiq_fastapi
+
+from app.services.intent_classifier import train_classifier
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    taskiq_fastapi.init(broker, "app.main:app")
+    if not broker.is_worker_process:
+        await broker.startup()
+        
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+    # Train the hybrid intent router in memory
+    train_classifier()
+        
     yield
+    
+    if not broker.is_worker_process:
+        await broker.shutdown()
     await engine.dispose()
 
 

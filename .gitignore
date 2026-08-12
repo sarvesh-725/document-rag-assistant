@@ -40,3 +40,9 @@ AGENTS.md
 CLAUDE.md
 PROJECT_WALKTHROUGH.md
 requirements
+
+# Ignore everything in root except frontend and backend
+/*
+!/rag-backend/
+!/rag-frontend/
+!.gitignore

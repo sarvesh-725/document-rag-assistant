@@ -13,8 +13,11 @@ interface ChatInputDockProps {
   queryLoading: boolean;
   sessionFiles: FileItem[];
   fetchFiles: () => Promise<void>;
-  onBind: (filename: string) => Promise<void>;
-  onUnbind: (filename: string) => Promise<void>;
+  selectedFiles: string[];
+  setSelectedFiles: React.Dispatch<React.SetStateAction<string[]>>;
+  onDelete: (filename: string) => Promise<void>;
+  globalFiles: FileItem[];
+  fetchGlobalFiles: () => Promise<void>;
 }
 
 export default function ChatInputDock({
@@ -26,11 +29,13 @@ export default function ChatInputDock({
   queryLoading,
   sessionFiles,
   fetchFiles,
-  onBind,
-  onUnbind
+  selectedFiles,
+  setSelectedFiles,
+  onDelete,
+  globalFiles,
+  fetchGlobalFiles
 }: ChatInputDockProps) {
   const [showOverlay, setShowOverlay] = useState(false);
-  const [globalFiles, setGlobalFiles] = useState<FileItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -38,27 +43,11 @@ export default function ChatInputDock({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  const fetchGlobalFiles = async () => {
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/global`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setGlobalFiles(data);
-      }
-    } catch (err) {
-      console.error('Error fetching global files:', err);
-    }
-  };
-
   useEffect(() => {
     if (showOverlay) {
       fetchGlobalFiles();
     }
-  }, [showOverlay, sessionFiles]);
+  }, [showOverlay, sessionFiles, fetchGlobalFiles]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -78,27 +67,22 @@ export default function ChatInputDock({
     .filter((f) => f.filename.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const isActive = (file: FileItem) => {
-    const sessionFile = sessionFiles.find(sf => sf.filename === file.filename);
-    return sessionFile ? (sessionFile.is_committed || sessionFile.just_uploaded || sessionFile.status === 'processing') : false;
+    return selectedFiles.includes(file.filename);
   };
 
   const handleToggleFile = async (file: FileItem) => {
     const active = isActive(file);
     if (active) {
-      if (file.just_uploaded) {
-        return; // Disable unchecking just uploaded files in checklist (they use Undo button)
-      }
-      await onUnbind(file.filename);
+      setSelectedFiles(prev => prev.filter(f => f !== file.filename));
     } else {
-      await onBind(file.filename);
+      setSelectedFiles(prev => [...prev, file.filename]);
     }
-    fetchGlobalFiles();
   };
 
 
 
   const unselectedGlobalFiles = globalFiles
-    .filter((gf) => !sessionFiles.some((sf) => sf.filename === gf.filename && (sf.is_committed || sf.just_uploaded || sf.status === 'processing')));
+    .filter((gf) => !selectedFiles.includes(gf.filename));
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -130,6 +114,9 @@ export default function ChatInputDock({
 
       setShowOverlay(false);
       await fetchFiles();
+      if (!selectedFiles.includes(file.name)) {
+        setSelectedFiles(prev => [...prev, file.name]);
+      }
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload document');
     } finally {
@@ -178,6 +165,9 @@ export default function ChatInputDock({
 
       setShowOverlay(false);
       await fetchFiles();
+      if (!selectedFiles.includes(file.name)) {
+        setSelectedFiles(prev => [...prev, file.name]);
+      }
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload document');
     } finally {
@@ -264,7 +254,7 @@ export default function ChatInputDock({
                   <div
                     key={file.filename}
                     onClick={() => {
-                      if (!isProcessing && !isJustUploaded) {
+                      if (!isProcessing) {
                         handleToggleFile(file);
                       }
                     }}
@@ -272,22 +262,27 @@ export default function ChatInputDock({
                       active
                         ? 'bg-slate-800/80 border-indigo-500/30'
                         : 'bg-slate-950/30 border-slate-800/40 hover:border-slate-700/30'
-                    } ${isProcessing || isJustUploaded ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
+                    } ${isProcessing ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'} group`}
                   >
                     <div className="flex items-center gap-2 truncate">
                       <input
                         type="checkbox"
                         checked={active}
-                        disabled={isProcessing || isJustUploaded}
-                        onChange={() => {}} // Handled by parent div onClick
+                        disabled={isProcessing}
+                        onChange={() => {
+                          if (!isProcessing) {
+                            handleToggleFile(file);
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
                         className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-600 focus:ring-offset-slate-900 cursor-pointer disabled:cursor-not-allowed"
                       />
-                      <span className="text-xs text-slate-300 font-medium truncate max-w-[240px]">
+                      <span className="text-xs text-slate-300 font-medium truncate max-w-[220px]">
                         {file.filename}
                       </span>
                     </div>
 
-                    <div className="text-[10px] flex items-center gap-1.5 font-semibold">
+                    <div className="text-[10px] flex items-center gap-3 font-semibold">
                       {isProcessing ? (
                         <div className="flex items-center gap-1 text-indigo-400">
                           <Loader2 size={10} className="animate-spin" />
@@ -295,19 +290,20 @@ export default function ChatInputDock({
                         </div>
                       ) : isFailed ? (
                         <span className="text-red-400">Ingestion Failed</span>
-                      ) : isJustUploaded ? (
-                        <span className="text-indigo-400 text-[9px] uppercase tracking-wider bg-indigo-500/10 px-1.5 py-0.5 rounded">
-                          Just Uploaded
-                        </span>
-                      ) : active ? (
-                        <span className="text-emerald-400 text-[9px] uppercase tracking-wider bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                          Active
-                        </span>
-                      ) : (
-                        <span className="text-slate-500 group-hover:text-slate-400 transition-colors text-[9px] uppercase tracking-wider font-semibold">
-                          Inactive
-                        </span>
-                      )}
+                      ) : null}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (confirm(`Are you sure you want to permanently delete ${file.filename}?`)) {
+                            await onDelete(file.filename);
+                            fetchGlobalFiles();
+                          }
+                        }}
+                        className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
+                        title="Delete file permanently"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                      </button>
                     </div>
                   </div>
                 );
@@ -325,10 +321,6 @@ export default function ChatInputDock({
 
       {}
       {(() => {
-        const hasActiveFiles = sessionFiles.some(
-          (f) => f.is_committed || f.just_uploaded || f.status === 'processing'
-        );
-
         return (
           <form onSubmit={onSubmit} className="flex gap-2 items-end bg-slate-900 border border-slate-800 rounded-2xl p-2 focus-within:border-indigo-500/50 transition-colors shadow-xl">
             <div className="flex-1 flex items-center relative pl-10">
@@ -344,33 +336,27 @@ export default function ChatInputDock({
 
               {}
               <textarea
-                disabled={queryLoading || !hasActiveFiles}
+                disabled={queryLoading}
                 rows={1}
                 value={inputQuestion}
                 onChange={(e) => setInputQuestion(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    if (inputQuestion.trim() && !queryLoading && hasActiveFiles) {
+                    if (inputQuestion.trim() && !queryLoading) {
                       onSubmit(e);
                     }
                   }
                 }}
-                placeholder={
-                  hasActiveFiles
-                    ? "Ask a question against active documents context..."
-                    : "Attach or select a document to start querying..."
-                }
-                className={`w-full bg-transparent border-0 resize-none text-sm text-slate-100 placeholder-slate-500 focus:ring-0 focus:outline-none min-h-[36px] py-2 max-h-[160px] pr-2 scrollbar-thin scrollbar-thumb-slate-800 ${
-                  !hasActiveFiles ? "cursor-not-allowed text-slate-500" : ""
-                }`}
+                placeholder="Ask a question (RAG active if files selected, else standard chat)..."
+                className="w-full bg-transparent border-0 resize-none text-sm text-slate-100 placeholder-slate-500 focus:ring-0 focus:outline-none min-h-[36px] py-2 max-h-[160px] pr-2 scrollbar-thin scrollbar-thumb-slate-800"
               />
             </div>
 
             {}
             <button
               type="submit"
-              disabled={queryLoading || !inputQuestion.trim() || !hasActiveFiles}
+              disabled={queryLoading || !inputQuestion.trim()}
               className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white p-3 rounded-xl transition-all shrink-0 shadow-sm flex items-center justify-center h-10 w-10 cursor-pointer"
             >
               {queryLoading ? (

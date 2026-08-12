@@ -24,6 +24,8 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputQuestion, setInputQuestion] = useState('');
   const [sessionFiles, setSessionFiles] = useState<FileItem[]>([]);
+  const [globalFiles, setGlobalFiles] = useState<FileItem[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -81,6 +83,29 @@ export default function Home() {
     fetchFiles();
   }, [activeSessionId, token]);
 
+  const fetchGlobalFiles = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/global`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGlobalFiles(data);
+      }
+    } catch (err) {
+      console.error('Error fetching global files:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      fetchGlobalFiles();
+    }
+  }, [token]);
+
   useEffect(() => {
     const loadSessionHistory = async () => {
       if (!activeSessionId || !token) return;
@@ -121,18 +146,14 @@ export default function Home() {
     loadSessionHistory();
   }, [activeSessionId, token]);
 
-  const handleUnbindFile = async (filename: string) => {
-    if (!activeSessionId || !token) return;
-    setSessionFiles(prev =>
-      prev.map(f => f.filename === filename ? { ...f, is_committed: false, just_uploaded: false } : f)
-    );
-  };
 
   const handleDeleteFile = async (filename: string) => {
     if (!activeSessionId || !token) return;
 
     const previousFiles = [...sessionFiles];
+    const previousSelected = [...selectedFiles];
     setSessionFiles(prev => prev.filter(f => f.filename !== filename));
+    setSelectedFiles(prev => prev.filter(f => f !== filename));
 
     try {
       const res = await fetch(
@@ -152,24 +173,15 @@ export default function Home() {
         const errData = await res.json();
         alert(errData.detail || 'Delete failed');
         setSessionFiles(previousFiles); // Rollback
+        setSelectedFiles(previousSelected);
       }
     } catch (err) {
       console.error('Failed to delete file:', err);
       setSessionFiles(previousFiles); // Rollback
+      setSelectedFiles(previousSelected);
     }
   };
 
-  const handleBindFile = async (filename: string) => {
-    if (!activeSessionId || !token) return;
-    setSessionFiles(prev => {
-      const exists = prev.some(f => f.filename === filename);
-      if (exists) {
-        return prev.map(f => f.filename === filename ? { ...f, is_committed: true, status: 'completed' } : f);
-      } else {
-        return [...prev, { filename, file_hash: '', is_committed: true, just_uploaded: false, status: 'completed' }];
-      }
-    });
-  };
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -226,6 +238,7 @@ export default function Home() {
     setActiveSessionId(null);
     setMessages([]);
     setSessionFiles([]);
+    setSelectedFiles([]);
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -236,9 +249,7 @@ export default function Home() {
     setInputQuestion('');
     setQueryLoading(true);
 
-    const activeFilesList = sessionFiles
-      .filter((f) => f.status === 'completed' && (f.is_committed || f.just_uploaded))
-      .map((f) => f.filename);
+    const activeFilesList = selectedFiles;
 
     setMessages((prev) => [
       ...prev,
@@ -499,11 +510,19 @@ export default function Home() {
 
             {}
             <div className="p-4 border-t border-slate-900 bg-slate-950 shrink-0 flex flex-col gap-2">
-              <SelectedFilesBar
-                files={sessionFiles.filter((f) => f.is_committed || f.just_uploaded || f.status === 'processing' || f.status === 'failed')}
-                onUnbind={handleUnbindFile}
-                onDelete={handleDeleteFile}
-              />
+              {(() => {
+                const allUniqueFilesMap = new Map<string, FileItem>();
+                globalFiles.forEach(f => allUniqueFilesMap.set(f.filename, f));
+                sessionFiles.forEach(f => allUniqueFilesMap.set(f.filename, f));
+                const allAvailableFiles = Array.from(allUniqueFilesMap.values());
+                return (
+                  <SelectedFilesBar
+                    files={allAvailableFiles.filter((f) => selectedFiles.includes(f.filename))}
+                    onUnbind={(filename) => setSelectedFiles(prev => prev.filter(f => f !== filename))}
+                    onDelete={handleDeleteFile}
+                  />
+                );
+              })()}
               <ChatInputDock
                 token={token}
                 sessionId={activeSessionId}
@@ -513,8 +532,11 @@ export default function Home() {
                 queryLoading={queryLoading}
                 sessionFiles={sessionFiles}
                 fetchFiles={fetchFiles}
-                onBind={handleBindFile}
-                onUnbind={handleUnbindFile}
+                selectedFiles={selectedFiles}
+                setSelectedFiles={setSelectedFiles}
+                onDelete={handleDeleteFile}
+                globalFiles={globalFiles}
+                fetchGlobalFiles={fetchGlobalFiles}
               />
             </div>
           </div>
