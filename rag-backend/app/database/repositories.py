@@ -45,6 +45,7 @@ async def create_document(
     db: AsyncSession,
     user_id: uuid.UUID,
     original_filename: str,
+    document_id: Optional[uuid.UUID] = None,
 ) -> Document:
     """Create a new Document, automatically assigning the next duplicate_index and display_name."""
     stmt = select(Document).where(
@@ -71,6 +72,7 @@ async def create_document(
         display_name = f"{base} ({next_index + 1}){ext}"
 
     doc = Document(
+        id=document_id or uuid.uuid4(),
         user_id=user_id,
         display_name=display_name,
         original_filename=original_filename,
@@ -298,9 +300,10 @@ async def update_message_status(
 # IngestionJob Repository
 # -----------------------------------------------------------------------------
 async def create_ingestion_job(
-    db: AsyncSession, document_id: uuid.UUID, version_id: uuid.UUID
+    db: AsyncSession, document_id: uuid.UUID, version_id: uuid.UUID,
+    job_id: Optional[uuid.UUID] = None, status: str = "PENDING", stage: str = "UPLOAD"
 ) -> IngestionJob:
-    job = IngestionJob(document_id=document_id, version_id=version_id)
+    job = IngestionJob(id=job_id or uuid.uuid4(), document_id=document_id, version_id=version_id, status=status, stage=stage)
     db.add(job)
     await db.flush()
     return job
@@ -332,9 +335,11 @@ async def get_or_create_conversation_summary(
 
 
 async def create_outbox_event(
-    db: AsyncSession, event_type: str, aggregate_id: uuid.UUID, payload: dict
+    db: AsyncSession, event_type: str, aggregate_id: uuid.UUID, payload: dict,
+    event_id: Optional[uuid.UUID] = None,
 ) -> OutboxEvent:
     event = OutboxEvent(
+        id=event_id or uuid.uuid4(),
         event_type=event_type,
         aggregate_id=aggregate_id,
         payload=payload,

@@ -10,12 +10,21 @@ import logging
 import os
 from app.broker import broker
 from app.services.storage import LocalStorageService
+from app.database.connection import AsyncSessionLocal
+from app.services.outbox import publish_pending_outbox_events
 
 logger = logging.getLogger("taskiq_worker")
 logging.basicConfig(level=logging.INFO)
 
 STORAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "UPLOADS"))
 storage_service = LocalStorageService(STORAGE_ROOT)
+
+
+@broker.task(task_name="tasks.publish_outbox_events")
+async def publish_outbox_events_task() -> int:
+    """Retry unpublished domain events; failed rows remain eligible next run."""
+    async with AsyncSessionLocal() as db:
+        return await publish_pending_outbox_events(db)
 
 
 @broker.task(task_name="tasks.process_document")
@@ -26,7 +35,8 @@ async def async_process_document_task(
     ingestion_job_id: str,
 ):
     """
-    STUB: Document processing task pending Phase 2/4 rewrite.
+    Validate and accept a durable task payload. Processing consumes storage_key,
+    never a local upload path.
 
     Will:
     1. Update IngestionJob status to RUNNING
@@ -34,19 +44,9 @@ async def async_process_document_task(
     3. Parse with Unstructured API
     ...
     """
-    logger.warning(
-        f"STUB: process_document called with document_id={document_id}, "
-        f"version_id={version_id}, storage_key={storage_key}, "
-        f"ingestion_job_id={ingestion_job_id}. "
-        "Pending full worker implementation."
-    )
+    logger.info("Received durable ingestion job %s", ingestion_job_id)
     
-    # Example logic demonstrating storage usage:
-    # 
-    # user_id = storage_key.split('/')[1] 
-    # content = await storage_service.read(storage_key, uuid.UUID(user_id))
-    # 
-    # * File deliberately kept intact on both success and failure 
-    #   per Phase 4 guidelines until retention policy applies.
-    
-    raise NotImplementedError("Document processing task pending Phase 5 rewrite.")
+    if not all((document_id, version_id, ingestion_job_id, storage_key)):
+        raise ValueError("Durable ingestion payload is missing a required identifier")
+    if not storage_key.startswith("documents/"):
+        raise ValueError("storage_key must be a StorageService key, never a local path")

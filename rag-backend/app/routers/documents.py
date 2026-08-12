@@ -16,13 +16,13 @@ import uuid
 import os
 import shutil
 import hashlib
-from typing import List
-from datetime import datetime
+from typing import List, Optional
 
 from app.database.repositories import (
     create_document, create_document_version, create_ingestion_job,
-    list_user_documents, soft_delete_document
+    create_outbox_event, get_session_by_id, list_user_documents, soft_delete_document
 )
+from app.database.enums import IngestionStatus, IngestionStage
 from app.services.storage import LocalStorageService
 
 logger = logging.getLogger("documents_router")
@@ -32,9 +32,14 @@ STORAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 storage_service = LocalStorageService(STORAGE_ROOT)
 
 
-@router.post("/upload")
+ALLOWED_TYPES = {"application/pdf", "text/plain"}
+ALLOWED_EXTENSIONS = {".pdf", ".txt"}
+
+
+@router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
     file: UploadFile = File(...),
+    session_id: Optional[str] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db = Depends(get_db)
 ):
@@ -44,42 +49,41 @@ async def upload_document(
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
-
-    # 1. Create Document (duplicate naming handled inside repository)
-    doc = await create_document(db, current_user.id, file.filename)
-
-    # 2. Pre-generate Version ID and construct strictly formatted storage_key
-    version_id = uuid.uuid4()
-    storage_key = f"documents/{current_user.id}/{doc.id}/{version_id}/original"
-
-    # 3. Save file using the StorageService
+    extension = os.path.splitext(file.filename)[1].lower()
+    if extension not in ALLOWED_EXTENSIONS or file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=415, detail="Only PDF and plain-text files are accepted")
+    if session_id is not None:
+        try:
+            session_uuid = uuid.UUID(session_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid session ID format") from exc
+        if not await get_session_by_id(db, session_uuid, current_user.id):
+            raise HTTPException(status_code=404, detail="Session not found or unauthorized")
+        # Session validation is read-only; begin the upload transaction only
+        # after the source has been durably written below.
+        await db.rollback()
     content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="File content is empty")
     file_hash = hashlib.sha256(content).hexdigest()
-    
+    document_id, version_id, ingestion_job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    storage_key = f"documents/{current_user.id}/{document_id}/{version_id}/original"
     await storage_service.save(storage_key, content, current_user.id)
-
-    # 4. Create DocumentVersion explicitly linking the storage_key
-    version = await create_document_version(
-        db=db,
-        document_id=doc.id,
-        content_hash=file_hash,
-        storage_key=storage_key,
-        parser_version="v1",
-        chunking_version="v1",
-        embedding_profile="default",
-        version_id=version_id,
-    )
-
-    # 4. Create IngestionJob
-    job = await create_ingestion_job(db, doc.id, version.id)
-    await db.commit()
-    
-    return {
-        "status": "success",
-        "document_id": str(doc.id),
-        "display_name": doc.display_name,
-        "original_filename": doc.original_filename
-    }
+    try:
+        await create_document(db, current_user.id, file.filename, document_id=document_id)
+        await create_document_version(db, document_id, file_hash, storage_key, "v1", "v1", "default", version_id)
+        await create_ingestion_job(db, document_id, version_id, ingestion_job_id, IngestionStatus.PENDING.value, IngestionStage.UPLOAD.value)
+        await create_outbox_event(db, "DOCUMENT_INGESTION_REQUESTED", ingestion_job_id, {
+            "ingestion_job_id": str(ingestion_job_id), "document_id": str(document_id),
+            "version_id": str(version_id), "storage_key": storage_key,
+            "user_id": str(current_user.id),
+        })
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await storage_service.delete(storage_key, current_user.id)
+        raise
+    return {"document_id": str(document_id), "version_id": str(version_id), "job_id": str(ingestion_job_id), "status": IngestionStatus.PENDING.value}
 
 
 @router.get("/global")
