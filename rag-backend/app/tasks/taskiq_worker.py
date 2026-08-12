@@ -7,35 +7,46 @@ with Document/DocumentVersion/IngestionJob models.
 
 import logging
 
+import os
 from app.broker import broker
+from app.services.storage import LocalStorageService
 
 logger = logging.getLogger("taskiq_worker")
 logging.basicConfig(level=logging.INFO)
+
+STORAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "UPLOADS"))
+storage_service = LocalStorageService(STORAGE_ROOT)
 
 
 @broker.task(task_name="tasks.process_document")
 async def async_process_document_task(
     document_id: str,
     version_id: str,
-    job_id: str,
+    storage_key: str,
+    ingestion_job_id: str,
 ):
     """
-    STUB: Document processing task pending Phase 2 rewrite.
+    STUB: Document processing task pending Phase 2/4 rewrite.
 
     Will:
     1. Update IngestionJob status to RUNNING
-    2. Read file from storage_key
+    2. Read file from StorageService via storage_key
     3. Parse with Unstructured API
-    4. Chunk with parent/child strategy
-    5. Embed with Gemini
-    6. Index in Qdrant
-    7. Update DocumentVersion status to READY
-    8. Update Document.current_version_id
-    9. Update IngestionJob status to COMPLETED
+    ...
     """
     logger.warning(
         f"STUB: process_document called with document_id={document_id}, "
-        f"version_id={version_id}, job_id={job_id}. "
-        "Pending Phase 2 implementation."
+        f"version_id={version_id}, storage_key={storage_key}, "
+        f"ingestion_job_id={ingestion_job_id}. "
+        "Pending full worker implementation."
     )
-    raise NotImplementedError("Document processing task pending Phase 2 rewrite.")
+    
+    # Example logic demonstrating storage usage:
+    # 
+    # user_id = storage_key.split('/')[1] 
+    # content = await storage_service.read(storage_key, uuid.UUID(user_id))
+    # 
+    # * File deliberately kept intact on both success and failure 
+    #   per Phase 4 guidelines until retention policy applies.
+    
+    raise NotImplementedError("Document processing task pending Phase 5 rewrite.")

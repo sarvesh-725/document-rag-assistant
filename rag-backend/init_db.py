@@ -57,7 +57,7 @@ async def seed_test_data():
             user = await create_user(db, "testuser", get_password_hash("password123"))
             
             # 2. Create a test document
-            doc = await create_document(db, user.id, "Welcome Guide.pdf", "welcome.pdf")
+            doc = await create_document(db, user.id, "welcome.pdf")
             version = await create_document_version(
                 db, doc.id, "hash123", "uploads/welcome.pdf", "v1", "v1", "gemini-2"
             )

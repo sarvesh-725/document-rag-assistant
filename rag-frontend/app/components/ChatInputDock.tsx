@@ -15,7 +15,7 @@ interface ChatInputDockProps {
   fetchFiles: () => Promise<void>;
   selectedFiles: string[];
   setSelectedFiles: React.Dispatch<React.SetStateAction<string[]>>;
-  onDelete: (filename: string) => Promise<void>;
+  onDelete: (document_id: string) => Promise<void>;
   globalFiles: FileItem[];
   fetchGlobalFiles: () => Promise<void>;
 }
@@ -60,29 +60,27 @@ export default function ChatInputDock({
   }, []);
 
   const allUniqueFilesMap = new Map<string, FileItem>();
-  globalFiles.forEach(f => allUniqueFilesMap.set(f.filename, f));
-  sessionFiles.forEach(f => allUniqueFilesMap.set(f.filename, f));
+  globalFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
+  sessionFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
 
   const allUniqueFiles = Array.from(allUniqueFilesMap.values())
-    .filter((f) => f.filename.toLowerCase().includes(searchQuery.toLowerCase()));
+    .filter((f) => f.display_name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const isActive = (file: FileItem) => {
-    return selectedFiles.includes(file.filename);
+    return selectedFiles.includes(file.document_id);
   };
 
   const handleToggleFile = async (file: FileItem) => {
     const active = isActive(file);
     if (active) {
-      setSelectedFiles(prev => prev.filter(f => f !== file.filename));
+      setSelectedFiles(prev => prev.filter(id => id !== file.document_id));
     } else {
-      setSelectedFiles(prev => [...prev, file.filename]);
+      setSelectedFiles(prev => [...prev, file.document_id]);
     }
   };
 
-
-
   const unselectedGlobalFiles = globalFiles
-    .filter((gf) => !selectedFiles.includes(gf.filename));
+    .filter((gf) => !selectedFiles.includes(gf.document_id));
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -111,11 +109,12 @@ export default function ChatInputDock({
         const errData = await res.json();
         throw new Error(errData.detail || 'Upload failed');
       }
+      const data = await res.json();
 
       setShowOverlay(false);
       await fetchFiles();
-      if (!selectedFiles.includes(file.name)) {
-        setSelectedFiles(prev => [...prev, file.name]);
+      if (data.document_id && !selectedFiles.includes(data.document_id)) {
+        setSelectedFiles(prev => [...prev, data.document_id]);
       }
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload document');
@@ -162,11 +161,12 @@ export default function ChatInputDock({
         const errData = await res.json();
         throw new Error(errData.detail || 'Upload failed');
       }
+      const data = await res.json();
 
       setShowOverlay(false);
       await fetchFiles();
-      if (!selectedFiles.includes(file.name)) {
-        setSelectedFiles(prev => [...prev, file.name]);
+      if (data.document_id && !selectedFiles.includes(data.document_id)) {
+        setSelectedFiles(prev => [...prev, data.document_id]);
       }
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload document');
@@ -252,7 +252,7 @@ export default function ChatInputDock({
 
                 return (
                   <div
-                    key={file.filename}
+                    key={file.document_id}
                     onClick={() => {
                       if (!isProcessing) {
                         handleToggleFile(file);
@@ -278,7 +278,7 @@ export default function ChatInputDock({
                         className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-600 focus:ring-offset-slate-900 cursor-pointer disabled:cursor-not-allowed"
                       />
                       <span className="text-xs text-slate-300 font-medium truncate max-w-[220px]">
-                        {file.filename}
+                        {file.display_name}
                       </span>
                     </div>
 
@@ -294,8 +294,8 @@ export default function ChatInputDock({
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          if (confirm(`Are you sure you want to permanently delete ${file.filename}?`)) {
-                            await onDelete(file.filename);
+                          if (confirm(`Are you sure you want to permanently delete ${file.display_name}?`)) {
+                            await onDelete(file.document_id);
                             fetchGlobalFiles();
                           }
                         }}

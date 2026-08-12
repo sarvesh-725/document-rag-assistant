@@ -45,10 +45,9 @@ async def get_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> Optional[User]
 async def create_document(
     db: AsyncSession,
     user_id: uuid.UUID,
-    display_name: str,
     original_filename: str,
 ) -> Document:
-    """Create a new Document, automatically assigning the next duplicate_index."""
+    """Create a new Document, automatically assigning the next duplicate_index and display_name."""
     stmt = select(Document).where(
         Document.user_id == user_id,
         Document.original_filename == original_filename,
@@ -60,6 +59,17 @@ async def create_document(
     next_index = 0
     if latest_duplicate is not None:
         next_index = latest_duplicate.duplicate_index + 1
+
+    import os
+    if next_index == 0:
+        display_name = original_filename
+    else:
+        base, ext = os.path.splitext(original_filename)
+        # Handle cases where multiple dots exist like .tar.gz
+        if base.endswith('.tar') and ext == '.gz':
+            base = base[:-4]
+            ext = '.tar.gz'
+        display_name = f"{base} ({next_index + 1}){ext}"
 
     doc = Document(
         user_id=user_id,
@@ -119,6 +129,7 @@ async def create_document_version(
     parser_version: str,
     chunking_version: str,
     embedding_profile: str,
+    version_id: Optional[uuid.UUID] = None,
 ) -> DocumentVersion:
     stmt = select(DocumentVersion).where(
         DocumentVersion.document_id == document_id
@@ -139,6 +150,8 @@ async def create_document_version(
         chunking_version=chunking_version,
         embedding_profile=embedding_profile,
     )
+    if version_id is not None:
+        version.id = version_id
     db.add(version)
     await db.flush()
     return version

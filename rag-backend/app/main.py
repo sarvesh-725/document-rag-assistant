@@ -3,7 +3,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,8 @@ from app.database.connection import get_db, engine, Base
 from app.database.models import User, ChatSession, Message
 from app.database.enums import MessageRole, MessageStatus
 from app.auth.security import get_current_user, verify_password, get_password_hash, create_access_token
+from app.config import get_settings
+from app.services.login_rate_limit import LoginRateLimiter
 from app.database.repositories import (
     create_user, get_user_by_username, list_user_sessions,
     create_session, soft_delete_session, get_session_by_id, get_session_messages
@@ -33,6 +35,9 @@ from app.services.intent_classifier import train_classifier
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
+    settings.require_secret_key()
+    settings.require_redis_url()
     taskiq_fastapi.init(broker, "app.main:app")
     if not broker.is_worker_process:
         await broker.startup()
@@ -56,7 +61,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_settings().validated_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -112,27 +117,31 @@ async def signup(request: UserSignupRequest, db: AsyncSession = Depends(get_db))
 
 @app.post("/api/v1/auth/login")
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
     """Authenticates credentials and returns a JWT access token."""
     username_clean = form_data.username.strip()
+    client_ip = request.client.host if request and request.client else "unknown"
+    limiter = LoginRateLimiter()
+    await limiter.check(username_clean, client_ip)
     user = await get_user_by_username(db, username_clean)
 
     if len(form_data.password.encode('utf-8')) > 72:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password cannot be longer than 72 bytes."
-        )
+        await limiter.record_failure(username_clean, client_ip)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
 
     if not user or not verify_password(form_data.password, user.hashed_password):
+        await limiter.record_failure(username_clean, client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(data={"sub": user.username})
+    await limiter.record_success(username_clean, client_ip)
+    access_token = create_access_token(data={"sub": user.username, "user_id": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}
 
 

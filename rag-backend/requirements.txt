@@ -184,6 +184,7 @@ zstandard==0.25.0
 taskiq
 taskiq-redis
 taskiq-fastapi
+redis>=5.0
 sentence-transformers
 scikit-learn
 tiktoken

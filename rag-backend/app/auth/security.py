@@ -1,5 +1,5 @@
-import os
 import bcrypt
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -10,10 +10,7 @@ from sqlalchemy import select
 
 from app.database.connection import get_db
 from app.database.models import User
-
-SECRET_KEY = os.getenv("SECRET_KEY", "prod-fallback-secret-key-39824u928340")
-ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+from app.config import get_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -37,12 +34,13 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Generates a signed JWT access token containing data claims."""
     to_encode = data.copy()
+    settings = get_settings()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.require_secret_key(), algorithm=settings.algorithm)
     return encoded_jwt
 
 async def get_current_user(
@@ -59,14 +57,17 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        settings = get_settings()
+        payload = jwt.decode(token, settings.require_secret_key(), algorithms=[settings.algorithm])
         username: str = payload.get("sub")
-        if username is None:
+        user_id_claim: str = payload.get("user_id")
+        if username is None or user_id_claim is None:
             raise credentials_exception
-    except JWTError:
+        user_id = uuid.UUID(user_id_claim)
+    except (JWTError, ValueError, TypeError):
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.username == username))
+    result = await db.execute(select(User).where(User.username == username, User.id == user_id))
     user = result.scalars().first()
     if user is None:
         raise credentials_exception

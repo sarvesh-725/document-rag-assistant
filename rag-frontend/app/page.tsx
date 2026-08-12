@@ -147,17 +147,17 @@ export default function Home() {
   }, [activeSessionId, token]);
 
 
-  const handleDeleteFile = async (filename: string) => {
+  const handleDeleteFile = async (document_id: string) => {
     if (!activeSessionId || !token) return;
 
     const previousFiles = [...sessionFiles];
     const previousSelected = [...selectedFiles];
-    setSessionFiles(prev => prev.filter(f => f.filename !== filename));
-    setSelectedFiles(prev => prev.filter(f => f !== filename));
+    setSessionFiles(prev => prev.filter(f => f.document_id !== document_id));
+    setSelectedFiles(prev => prev.filter(f => f !== document_id));
 
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/sessions/${activeSessionId}/files/${encodeURIComponent(filename)}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/${document_id}`,
         {
           method: 'DELETE',
           headers: {
@@ -462,14 +462,19 @@ export default function Home() {
                   {}
                   {msg.role === 'user' && msg.bound_files && msg.bound_files.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-1 max-w-2xl">
-                      {msg.bound_files.map((file) => (
-                        <span
-                          key={file}
-                          className="bg-slate-900 border border-slate-800 text-slate-400 px-2.5 py-1 rounded-full text-[10px] flex items-center gap-1 font-semibold hover:text-slate-300 transition-colors"
-                        >
-                          📄 {file}
-                        </span>
-                      ))}
+                      {msg.bound_files.map((fileId) => {
+                        const fileMatch = globalFiles.find(f => f.document_id === fileId) || sessionFiles.find(f => f.document_id === fileId);
+                        const displayName = fileMatch ? fileMatch.display_name : fileId;
+                        return (
+                          <span
+                            key={fileId}
+                            className="bg-slate-900 border border-slate-800 text-slate-400 px-2.5 py-1 rounded-full text-[10px] flex items-center gap-1 font-semibold hover:text-slate-300 transition-colors"
+                            title={fileId}
+                          >
+                            📄 {displayName}
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -512,13 +517,13 @@ export default function Home() {
             <div className="p-4 border-t border-slate-900 bg-slate-950 shrink-0 flex flex-col gap-2">
               {(() => {
                 const allUniqueFilesMap = new Map<string, FileItem>();
-                globalFiles.forEach(f => allUniqueFilesMap.set(f.filename, f));
-                sessionFiles.forEach(f => allUniqueFilesMap.set(f.filename, f));
+                globalFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
+                sessionFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
                 const allAvailableFiles = Array.from(allUniqueFilesMap.values());
                 return (
                   <SelectedFilesBar
-                    files={allAvailableFiles.filter((f) => selectedFiles.includes(f.filename))}
-                    onUnbind={(filename) => setSelectedFiles(prev => prev.filter(f => f !== filename))}
+                    files={allAvailableFiles.filter((f) => selectedFiles.includes(f.document_id))}
+                    onUnbind={async (doc_id) => setSelectedFiles(prev => prev.filter(f => f !== doc_id))}
                     onDelete={handleDeleteFile}
                   />
                 );
