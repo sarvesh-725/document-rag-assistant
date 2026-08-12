@@ -206,7 +206,7 @@ class Message(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("chat_sessions.id"), nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -294,7 +294,7 @@ class QueryRun(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("chat_sessions.id"), nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
@@ -328,7 +328,7 @@ class QueryRunDocument(Base):
     __tablename__ = "query_run_documents"
 
     query_run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("query_runs.id"), primary_key=True
+        UUID(as_uuid=True), ForeignKey("query_runs.id", ondelete="CASCADE"), primary_key=True
     )
     document_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("documents.id"), primary_key=True
@@ -352,7 +352,7 @@ class ConversationSummary(Base):
     __tablename__ = "conversation_summaries"
 
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("chat_sessions.id"), primary_key=True
+        UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), primary_key=True
     )
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_summarized_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(

@@ -3,7 +3,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, Depends, HTTPException, Request, status
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.services.login_rate_limit import LoginRateLimiter
 from app.database.repositories import (
     create_user, get_user_by_username, list_user_sessions,
-    create_session, soft_delete_session, get_session_by_id, get_session_messages
+    create_session, delete_session as delete_owned_session, get_session_by_id, get_session_messages
 )
 
 logging.basicConfig(
@@ -169,14 +169,15 @@ async def get_user_sessions(
     ]
 
 
-@app.post("/api/v1/sessions/new", status_code=status.HTTP_201_CREATED)
+@app.post("/api/v1/sessions", status_code=status.HTTP_201_CREATED)
 async def create_new_session(
     request: NewSessionRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Creates a fresh chat session with a server-generated UUID.
+    Creates exactly one fresh chat session with a server-generated UUID.
+    A request cannot supply an id or replace an existing session.
     """
     new_session = await create_session(db, current_user.id, request.title or "New Conversation")
     await db.commit()
@@ -184,7 +185,6 @@ async def create_new_session(
 
     return {
         "status": "success",
-        "user_id": str(current_user.id),
         "session_id": str(new_session.id),
         "title": new_session.title,
     }
@@ -197,7 +197,8 @@ async def delete_session(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Soft-deletes the session by setting deleted_at.
+    Deletes only the authenticated user's session and its conversation state.
+    Global documents, their storage, and their vectors are not session-owned.
     """
     try:
         session_uuid = uuid.UUID(session_id)
@@ -207,7 +208,7 @@ async def delete_session(
             detail="Invalid session ID format. Must be a valid UUID."
         )
 
-    deleted = await soft_delete_session(db, session_uuid, current_user.id)
+    deleted = await delete_owned_session(db, session_uuid, current_user.id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -215,14 +216,16 @@ async def delete_session(
         )
     
     await db.commit()
-    return {"status": "success", "message": f"Session '{session_id}' soft-deleted."}
+    return {"status": "success", "message": "Session deleted."}
 
 
 @app.get("/api/v1/sessions/{session_id}/history")
 async def get_session_history(
     session_id: str,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     """
     Returns the chat message history for the target session.
@@ -243,9 +246,10 @@ async def get_session_history(
             detail="Session not found or unauthorized"
         )
 
-    messages = await get_session_messages(db, session_uuid)
+    messages = await get_session_messages(db, session_uuid, limit=limit, offset=offset)
 
-    return [
+    return {
+        "items": [
         {
             "id": str(m.id),
             "sequence_number": m.sequence_number,
@@ -257,7 +261,9 @@ async def get_session_history(
             "created_at": m.created_at.isoformat() if m.created_at else None,
         }
         for m in messages
-    ]
+        ],
+        "pagination": {"limit": limit, "offset": offset, "count": len(messages)},
+    }
 
 
 # ---------------------------------------------------------------------------

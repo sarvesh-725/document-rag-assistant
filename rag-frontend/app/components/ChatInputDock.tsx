@@ -88,7 +88,7 @@ export default function ChatInputDock({
     setUploading(true);
     setUploadError(null);
 
-    const isAlreadyPresent = sessionFiles.some((sf) => sf.filename === file.name);
+    const isAlreadyPresent = sessionFiles.some((sf) => sf.original_filename === file.name);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -248,7 +248,6 @@ export default function ChatInputDock({
                 const active = isActive(file);
                 const isProcessing = file.status === 'processing';
                 const isFailed = file.status === 'failed';
-                const isJustUploaded = file.just_uploaded;
 
                 return (
                   <div

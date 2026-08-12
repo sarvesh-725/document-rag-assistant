@@ -11,8 +11,13 @@ interface SidebarProps {
   refreshTrigger: number;
 }
 
+interface SessionSummary {
+  id: string;
+  title: string | null;
+}
+
 export default function Sidebar({ token, activeSessionId, setActiveSessionId, onLogout, refreshTrigger }: SidebarProps) {
-  const [sessions, setSessions] = useState<string[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchSessions = async () => {
@@ -43,23 +48,23 @@ export default function Sidebar({ token, activeSessionId, setActiveSessionId, on
 
   const handleCreateSession = async () => {
     setLoading(true);
-    const newSessionId = `Session_${Date.now()}`;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/sessions/new`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/sessions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ session_id: newSessionId }),
+        body: JSON.stringify({ title: 'New Conversation' }),
       });
       if (res.status === 401) {
         onLogout();
         return;
       }
       if (res.ok) {
+        const session = await res.json();
         await fetchSessions();
-        setActiveSessionId(newSessionId);
+        setActiveSessionId(session.session_id);
       }
     } catch (err) {
       console.error('Failed to create session:', err);
@@ -73,7 +78,7 @@ export default function Sidebar({ token, activeSessionId, setActiveSessionId, on
     if (!confirm(`Are you sure you want to delete session "${id}"?`)) return;
 
     const previousSessions = [...sessions];
-    setSessions(prev => prev.filter(s => s !== id));
+    setSessions(prev => prev.filter(session => session.id !== id));
     if (activeSessionId === id) {
       setActiveSessionId(null);
     }
@@ -125,22 +130,22 @@ export default function Sidebar({ token, activeSessionId, setActiveSessionId, on
 
       <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
         <span className="text-xs font-semibold uppercase text-slate-500 px-2 block mb-2">Conversations</span>
-        {sessions.map((id) => (
+        {sessions.map((session) => (
           <div
-            key={id}
-            onClick={() => setActiveSessionId(id)}
+            key={session.id}
+            onClick={() => setActiveSessionId(session.id)}
             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left transition-colors font-medium cursor-pointer group ${
-              activeSessionId === id
+              activeSessionId === session.id
                 ? 'bg-slate-800 text-indigo-400 border border-slate-700'
                 : 'hover:bg-slate-800/50 text-slate-400 hover:text-slate-200'
             }`}
           >
             <div className="flex items-center gap-3 truncate">
-              <MessageSquare size={16} className={activeSessionId === id ? 'text-indigo-400' : 'text-slate-500'} />
-              <span className="truncate">{id}</span>
+              <MessageSquare size={16} className={activeSessionId === session.id ? 'text-indigo-400' : 'text-slate-500'} />
+              <span className="truncate">{session.title || 'New Conversation'}</span>
             </div>
             <button
-              onClick={(e) => handleDeleteSession(e, id)}
+              onClick={(e) => handleDeleteSession(e, session.id)}
               className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-slate-750 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
               title="Delete session"
             >

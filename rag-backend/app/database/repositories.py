@@ -10,7 +10,6 @@ from typing import List, Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.database.models import (
     User, Document, DocumentVersion, ChatSession, Message,
@@ -184,7 +183,7 @@ async def get_session_by_id(
         ChatSession.id == session_id,
         ChatSession.user_id == user_id,
         ChatSession.deleted_at.is_(None),
-    ).options(selectinload(ChatSession.messages))
+    )
     
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -200,13 +199,19 @@ async def list_user_sessions(db: AsyncSession, user_id: uuid.UUID) -> List[ChatS
     return list(result.scalars().all())
 
 
-async def soft_delete_session(
+async def delete_session(
     db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID
 ) -> bool:
+    """Delete one owned conversation aggregate and its dependent rows.
+
+    Database cascades remove messages, query runs, query-run document snapshots,
+    and the conversation summary. Documents are not related to a session and are
+    therefore deliberately untouched.
+    """
     session = await get_session_by_id(db, session_id, user_id)
     if not session:
         return False
-    session.deleted_at = datetime.utcnow()
+    await db.delete(session)
     await db.flush()
     return True
 
@@ -223,12 +228,30 @@ async def create_message(
     selected_document_snapshot: Optional[dict] = None,
     sources: Optional[dict] = None,
 ) -> Message:
-    stmt = select(Message.sequence_number).where(
-        Message.session_id == session_id
-    ).order_by(Message.sequence_number.desc()).limit(1)
-    
-    result = await db.execute(stmt)
-    latest_seq = result.scalar_one_or_none()
+    """Append a row message with a transaction-safe, server-assigned sequence.
+
+    Locking the parent session serializes appends from multiple requests. The
+    database unique constraints remain the final guard against duplicate client
+    requests and sequence values.
+    """
+    if role not in {"user", "assistant", "system"}:
+        raise ValueError("Message role must be user, assistant, or system")
+    if role == "user" and not client_request_id:
+        raise ValueError("User messages require client_request_id")
+    if role != "user" and client_request_id is not None:
+        raise ValueError("Only user messages may have client_request_id")
+    if role != "user" and selected_document_snapshot is not None:
+        raise ValueError("Only user messages may store a selected document snapshot")
+    if role != "assistant" and sources is not None:
+        raise ValueError("Only assistant messages may store sources")
+
+    await db.execute(
+        select(ChatSession.id).where(ChatSession.id == session_id).with_for_update()
+    )
+    stmt = select(Message.sequence_number).where(Message.session_id == session_id).order_by(
+        Message.sequence_number.desc()
+    ).limit(1)
+    latest_seq = (await db.execute(stmt)).scalar_one_or_none()
     next_seq = 1 if latest_seq is None else latest_seq + 1
 
     message = Message(
@@ -245,10 +268,17 @@ async def create_message(
     return message
 
 
-async def get_session_messages(db: AsyncSession, session_id: uuid.UUID) -> List[Message]:
+async def get_session_messages(
+    db: AsyncSession, session_id: uuid.UUID, *, limit: int = 50, offset: int = 0
+) -> List[Message]:
+    """Fetch one bounded, deterministically ordered page of message rows."""
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    if offset < 0:
+        raise ValueError("offset must not be negative")
     stmt = select(Message).where(
         Message.session_id == session_id
-    ).order_by(Message.sequence_number.asc())
+    ).order_by(Message.sequence_number.asc()).offset(offset).limit(limit)
     
     result = await db.execute(stmt)
     return list(result.scalars().all())

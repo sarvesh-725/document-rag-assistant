@@ -121,16 +121,10 @@ export default function Home() {
         }
         if (historyRes.ok) {
           const data = await historyRes.json();
-          const mapped = data.map((msg: any) => {
-            if (msg.type && msg.data) {
-              const role = msg.type === 'human' || msg.type === 'user' ? 'user' : 'assistant';
-              const text = msg.data.content || '';
-              const bound_files = msg.data.additional_kwargs?.bound_files || msg.data.bound_files || [];
-              return { role, text, bound_files };
-            }
-            const role = msg.role === 'user' || msg.role === 'human' ? 'user' : 'assistant';
-            const text = msg.content || msg.text || '';
-            const bound_files = msg.bound_files || [];
+          const mapped = data.items.map((msg: any) => {
+            const role = msg.role;
+            const text = msg.content || '';
+            const bound_files = msg.selected_document_snapshot?.document_ids || [];
             return { role, text, bound_files };
           });
           setMessages(mapped);
