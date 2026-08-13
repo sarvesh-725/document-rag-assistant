@@ -16,7 +16,11 @@ def user():
 async def test_upload_creates_durable_ids_and_outbox_payload(monkeypatch):
     current_user, db = user(), AsyncMock()
     events = []
-    monkeypatch.setattr(documents, "create_document", AsyncMock())
+    monkeypatch.setattr(
+        documents,
+        "create_document",
+        AsyncMock(return_value=SimpleNamespace(display_name="a.txt")),
+    )
     monkeypatch.setattr(documents, "create_document_version", AsyncMock())
     monkeypatch.setattr(documents, "create_ingestion_job", AsyncMock())
     monkeypatch.setattr(documents, "create_outbox_event", AsyncMock(side_effect=lambda *args: events.append(args)))
@@ -25,7 +29,8 @@ async def test_upload_creates_durable_ids_and_outbox_payload(monkeypatch):
 
     response = await documents.upload_document(file=file, current_user=current_user, db=db)
 
-    assert response["status"] == "PENDING"
+    assert response["status"] == "PROCESSING"
+    assert response["display_name"] == "a.txt"
     payload = events[0][3]
     assert {"ingestion_job_id", "document_id", "version_id", "storage_key"} <= payload.keys()
     db.commit.assert_awaited_once()

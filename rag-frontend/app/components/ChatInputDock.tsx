@@ -95,7 +95,7 @@ export default function ChatInputDock({
 
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/upload?session_id=${sessionId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents`,
         {
           method: 'POST',
           headers: {
@@ -147,7 +147,7 @@ export default function ChatInputDock({
 
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/upload?session_id=${sessionId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents`,
         {
           method: 'POST',
           headers: {
