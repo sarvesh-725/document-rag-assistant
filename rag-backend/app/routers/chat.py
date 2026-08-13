@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.connection import get_db
 from app.database.models import User
 from app.auth.security import get_current_user
-from app.database.enums import MessageRole, QueryRunStatus
+from app.database.enums import MessageRole, MessageStatus, QueryRunStatus
 from app.database.repositories import (
     add_query_run_documents,
     create_message,
@@ -21,18 +21,24 @@ from app.database.repositories import (
     get_query_run_for_message,
     get_session_by_id,
     transition_query_run_status,
+    update_message_status,
 )
 from app.services.document_selection import (
     DocumentSelectionError,
     resolve_selected_documents,
 )
 from app.services.intent_classifier import QueryAnalysis, classify_intent
-from app.services.retrieval import HybridRetriever, serialize_context
+from app.services.retrieval import (
+    HybridRetriever,
+    has_sufficient_evidence,
+    serialize_context,
+)
 from app.services.vector_access import owned_vector_filter
 
 logger = logging.getLogger("chat_router")
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 hybrid_retriever = HybridRetriever()
+NO_GROUNDING_RESPONSE = "The selected documents do not contain enough information to answer this question."
 
 
 def _qdrant_model_dump(model) -> dict:
@@ -165,6 +171,7 @@ async def query_chat_stream(
 
     query_run = None
     retrieval_result = None
+    assistant_message = None
     try:
         message = await create_message(
             db,
@@ -207,6 +214,21 @@ async def query_chat_stream(
             await db.commit()
             return {"status": QueryRunStatus.CANCELLED.value, "query_run_id": str(query_run.id)}
 
+        if retrieval_result is not None and not has_sufficient_evidence(retrieval_result):
+            assistant_message = await create_message(
+                db,
+                session_id,
+                MessageRole.ASSISTANT.value,
+                content=NO_GROUNDING_RESPONSE,
+                sources={"documents": []},
+            )
+            await update_message_status(
+                db,
+                assistant_message.id,
+                MessageStatus.COMPLETED.value,
+                content=NO_GROUNDING_RESPONSE,
+            )
+
         transition_query_run_status(query_run, QueryRunStatus.COMPLETED.value)
         await db.commit()
     except asyncio.CancelledError:
@@ -241,7 +263,11 @@ async def query_chat_stream(
             if retrieval_result is not None
             else [],
         },
+        "grounded": retrieval_result is None or has_sufficient_evidence(retrieval_result),
     }
+    if assistant_message is not None:
+        response["answer"] = NO_GROUNDING_RESPONSE
+        response["assistant_message_id"] = str(assistant_message.id)
     if vector_filter is not None:
         response["qdrant_filter"] = _qdrant_model_dump(vector_filter)
     return response

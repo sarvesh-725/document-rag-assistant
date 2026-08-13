@@ -15,6 +15,7 @@ from app.services.retrieval import (
     RetrievalConfig,
     RetrievalFusion,
     Reranker,
+    ParentExpander,
     serialize_context,
 )
 
@@ -156,3 +157,65 @@ def test_context_builder_deduplicates_parent_and_serializes_provenance():
     assert len(serialized) == 1
     assert serialized[0]["text"] == "full parent text"
     assert {"document_id", "version_id", "parent_id", "chunk_id", "page", "section", "dense_score", "bm25_score", "fusion_score", "rerank_score"} <= serialized[0].keys()
+
+
+@pytest.mark.asyncio
+async def test_parent_expander_groups_children_and_retains_child_evidence():
+    version_id = uuid.uuid4()
+    parent_id = uuid.uuid4()
+    children = [
+        candidate(str(index), f"child {index}", parent_id=str(parent_id), version_id=version_id)
+        for index in range(3)
+    ]
+    for index, child in enumerate(children):
+        child.fusion_score = 1.0 / (index + 1)
+    other_parent = candidate("4", "other", parent_id=str(uuid.uuid4()), version_id=version_id)
+    other_parent.fusion_score = 0.2
+
+    class Result:
+        def all(self):
+            return [
+                (
+                    SimpleNamespace(
+                        id=parent_id,
+                        text="P1 full text",
+                        page_start=3,
+                        page_end=4,
+                        section="Revenue",
+                        element_type="NarrativeText",
+                        source_position={"elements": [1]},
+                    ),
+                    "report.pdf",
+                )
+            ]
+
+    db = SimpleNamespace(execute=AsyncMock(return_value=Result()))
+    expanded = await ParentExpander().expand(db, children + [other_parent])
+
+    assert len(expanded) == 2
+    p1 = next(item for item in expanded if item.parent_id == str(parent_id))
+    assert p1.text == "P1 full text"
+    assert p1.display_name == "report.pdf"
+    assert len(p1.child_evidence or []) == 3
+    assert p1.page_start == 3
+    assert p1.section == "Revenue"
+
+
+@pytest.mark.asyncio
+async def test_cohere_failure_falls_back_to_fusion_order_and_increments_metric(monkeypatch):
+    import app.services.retrieval as retrieval
+
+    class BrokenCohere:
+        async def rerank(self, **kwargs):
+            raise RuntimeError("cohere unavailable")
+
+    first = candidate("1", "first")
+    second = candidate("2", "second")
+    first.fusion_score = 0.2
+    second.fusion_score = 0.9
+    before = retrieval.reranker_failure_count
+
+    results = await Reranker(client=BrokenCohere()).rerank("query", [first, second])
+
+    assert [item.chunk_id for item in results] == ["2", "1"]
+    assert retrieval.reranker_failure_count == before + 1

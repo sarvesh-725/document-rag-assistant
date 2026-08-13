@@ -11,6 +11,7 @@ import math
 import os
 import re
 import uuid
+import logging
 from asyncio import gather
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional, Protocol, Sequence
@@ -18,9 +19,11 @@ from typing import Any, Callable, Optional, Protocol, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import DocumentParent
+from app.database.models import Document, DocumentParent, DocumentVersion
 from app.services import rag_engine
 from app.services.vector_access import owned_vector_filter
+
+logger = logging.getLogger("retrieval")
 
 
 TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
@@ -60,18 +63,20 @@ class RetrievalConfig:
 
 
 @dataclass
-class RetrievalCandidate:
+class RetrievedEvidence:
     document_id: str
     version_id: str
     parent_id: str
     chunk_id: str
     text: str
+    display_name: str = ""
     page: Optional[int] = None
     section: Optional[str] = None
     dense_score: Optional[float] = None
     bm25_score: Optional[float] = None
     fusion_score: Optional[float] = None
     rerank_score: Optional[float] = None
+    rerank_rank: Optional[int] = None
     dense_rank: Optional[int] = None
     bm25_rank: Optional[int] = None
     parent_text: Optional[str] = None
@@ -79,10 +84,16 @@ class RetrievalCandidate:
     page_start: Optional[int] = None
     page_end: Optional[int] = None
     source_position: Optional[dict] = None
+    child_evidence: list["RetrievedEvidence"] | None = None
 
     @property
     def identity(self) -> str:
         return f"{self.document_id}:{self.version_id}:{self.chunk_id}"
+
+
+# Internal stage names remain readable while the structured evidence object is
+# the public source of truth for context, citations, debugging, and evaluation.
+RetrievalCandidate = RetrievedEvidence
 
 
 def _candidate_from_payload(
@@ -280,37 +291,77 @@ class RetrievalFusion:
 
 
 class ParentExpander:
-    """Attach PostgreSQL parent text after candidate fusion."""
+    """Group child evidence by parent and attach one PostgreSQL parent record."""
 
     async def expand(
         self, db: Optional[AsyncSession], candidates: Sequence[RetrievalCandidate]
     ) -> list[RetrievalCandidate]:
-        if db is None or not candidates:
-            return list(candidates)
-        parent_ids = []
+        if not candidates:
+            return []
+
+        grouped: dict[str, list[RetrievalCandidate]] = {}
         for candidate in candidates:
-            try:
-                parent_ids.append(uuid.UUID(candidate.parent_id))
-            except ValueError:
-                continue
-        if not parent_ids:
-            return list(candidates)
-        result = await db.execute(
-            select(DocumentParent).where(
-                DocumentParent.id.in_(parent_ids),
-                DocumentParent.version_id.in_(
-                    [uuid.UUID(candidate.version_id) for candidate in candidates]
-                ),
+            grouped.setdefault(f"{candidate.document_id}:{candidate.version_id}:{candidate.parent_id}", []).append(candidate)
+
+        parents: dict[str, tuple[Any, str]] = {}
+        if db is not None:
+            parent_ids = []
+            version_ids = []
+            for candidate in candidates:
+                try:
+                    parent_ids.append(uuid.UUID(candidate.parent_id))
+                    version_ids.append(uuid.UUID(candidate.version_id))
+                except ValueError:
+                    continue
+            if parent_ids:
+                result = await db.execute(
+                    select(DocumentParent, Document.display_name)
+                    .join(DocumentVersion, DocumentVersion.id == DocumentParent.version_id)
+                    .join(Document, Document.id == DocumentVersion.document_id)
+                    .where(
+                        DocumentParent.id.in_(parent_ids),
+                        DocumentParent.version_id.in_(version_ids),
+                    )
+                )
+                parents = {
+                    str(parent.id): (parent, display_name)
+                    for parent, display_name in result.all()
+                }
+
+        expanded: list[RetrievalCandidate] = []
+        for children in grouped.values():
+            children = sorted(
+                children,
+                key=lambda item: item.fusion_score or 0.0,
+                reverse=True,
             )
-        )
-        parents = {str(parent.id): parent for parent in result.scalars().all()}
-        return [
-            replace(
-                candidate,
-                parent_text=getattr(parents.get(candidate.parent_id), "text", None),
+            representative = children[0]
+            parent_record, display_name = parents.get(representative.parent_id, (None, representative.display_name or representative.document_id))
+            fusion_scores = [child.fusion_score or 0.0 for child in children]
+            dense_scores = [child.dense_score for child in children if child.dense_score is not None]
+            bm25_scores = [child.bm25_score for child in children if child.bm25_score is not None]
+            combined_fusion = max(fusion_scores) + sum(fusion_scores[1:]) * 0.1
+            expanded.append(
+                replace(
+                    representative,
+                    display_name=display_name,
+                    text=getattr(parent_record, "text", None) or representative.text,
+                    page=getattr(parent_record, "page_start", None) or representative.page,
+                    page_start=getattr(parent_record, "page_start", None) or representative.page_start,
+                    page_end=getattr(parent_record, "page_end", None) or representative.page_end,
+                    section=getattr(parent_record, "section", None) or representative.section,
+                    element_type=getattr(parent_record, "element_type", None) or representative.element_type,
+                    source_position=getattr(parent_record, "source_position", None) or representative.source_position,
+                    dense_score=max(dense_scores) if dense_scores else None,
+                    bm25_score=max(bm25_scores) if bm25_scores else None,
+                    fusion_score=combined_fusion,
+                    child_evidence=children,
+                )
             )
-            for candidate in candidates
-        ]
+        return sorted(expanded, key=lambda item: item.fusion_score or 0.0, reverse=True)
+
+
+reranker_failure_count = 0
 
 
 class Reranker:
@@ -330,7 +381,14 @@ class Reranker:
     async def rerank(self, query: str, candidates: Sequence[RetrievalCandidate]) -> list[RetrievalCandidate]:
         if not candidates:
             return []
-        if self.client is not None:
+        if self.client is None:
+            ordered = sorted(
+                candidates,
+                key=lambda candidate: candidate.fusion_score or 0.0,
+                reverse=True,
+            )
+            return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
+        try:
             result = await self.client.rerank(
                 model=self.model,
                 query=query,
@@ -341,21 +399,22 @@ class Reranker:
                 replace(candidates[item.index], rerank_score=float(item.relevance_score))
                 for item in result.results
             ]
-            return reranked
-
-        query_terms = set(_tokenize(query))
-        scored = [
-            replace(
-                candidate,
-                rerank_score=(
-                    len(query_terms.intersection(_tokenize(candidate.text))) / len(query_terms)
-                    if query_terms
-                    else 0.0
-                ),
+            ordered = sorted(
+                reranked,
+                key=lambda candidate: candidate.rerank_score or 0.0,
+                reverse=True,
             )
-            for candidate in candidates
-        ]
-        return sorted(scored, key=lambda candidate: candidate.rerank_score or 0.0, reverse=True)
+            return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
+        except Exception:
+            global reranker_failure_count
+            reranker_failure_count += 1
+            logger.exception("Cohere reranking failed; using fusion-ranked candidates")
+            ordered = sorted(
+                candidates,
+                key=lambda candidate: candidate.fusion_score or 0.0,
+                reverse=True,
+            )
+            return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
 
 
 @dataclass(frozen=True)
@@ -427,6 +486,11 @@ class HybridRetrievalResult:
     context: list[ContextBlock]
 
 
+def has_sufficient_evidence(result: Optional[HybridRetrievalResult]) -> bool:
+    """Application grounding rule: no selected context means no answer."""
+    return result is not None and bool(result.context)
+
+
 class HybridRetriever:
     """Orchestrate dense -> BM25 -> fusion -> expansion -> rerank -> context."""
 
@@ -491,15 +555,40 @@ def serialize_context(result: HybridRetrievalResult) -> list[dict[str, Any]]:
         {
             "document_id": block.candidate.document_id,
             "version_id": block.candidate.version_id,
+            "display_name": block.candidate.display_name,
             "parent_id": block.candidate.parent_id,
             "chunk_id": block.candidate.chunk_id,
             "text": block.text,
             "page": block.candidate.page,
+            "page_start": block.candidate.page_start,
+            "page_end": block.candidate.page_end,
             "section": block.candidate.section,
+            "element_type": block.candidate.element_type,
+            "source_position": block.candidate.source_position,
             "dense_score": block.candidate.dense_score,
             "bm25_score": block.candidate.bm25_score,
             "fusion_score": block.candidate.fusion_score,
             "rerank_score": block.candidate.rerank_score,
+            "rerank_rank": block.candidate.rerank_rank,
+            "child_evidence": [
+                {
+                    "document_id": child.document_id,
+                    "version_id": child.version_id,
+                    "parent_id": child.parent_id,
+                    "chunk_id": child.chunk_id,
+                    "text": child.text,
+                    "page": child.page,
+                    "page_start": child.page_start,
+                    "page_end": child.page_end,
+                    "section": child.section,
+                    "element_type": child.element_type,
+                    "source_position": child.source_position,
+                    "dense_score": child.dense_score,
+                    "bm25_score": child.bm25_score,
+                    "fusion_score": child.fusion_score,
+                }
+                for child in (block.candidate.child_evidence or [])
+            ],
         }
         for block in result.context
     ]
