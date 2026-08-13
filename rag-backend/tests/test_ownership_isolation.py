@@ -66,5 +66,7 @@ def test_user_a_vector_filter_cannot_match_user_bs_vectors():
     vector_filter = owned_vector_filter(user_a.id, [uuid.uuid4()])
 
     owner_condition = next(condition for condition in vector_filter.must if condition.key == "user_id")
+    version_condition = next(condition for condition in vector_filter.must if condition.key == "version_id")
     assert owner_condition.match.value == str(user_a.id)
     assert owner_condition.match.value != str(user_b.id)
+    assert version_condition.match.any

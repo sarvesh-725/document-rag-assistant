@@ -15,7 +15,9 @@ from app.database.models import (
     User, Document, DocumentVersion, DocumentParent, ChatSession, Message,
     IngestionJob, QueryRun, QueryRunDocument, ConversationSummary, OutboxEvent,
 )
-from app.database.enums import DocumentStatus, VersionStatus, IngestionStatus, IngestionStage
+from app.database.enums import (
+    DocumentStatus, VersionStatus, IngestionStatus, IngestionStage, QueryRunStatus,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -332,6 +334,48 @@ async def update_message_status(
         stmt = stmt.values(content=content)
     await db.execute(stmt)
     await db.flush()
+
+
+# -----------------------------------------------------------------------------
+# QueryRun Repository
+# -----------------------------------------------------------------------------
+async def create_query_run(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+    message_id: Optional[uuid.UUID] = None,
+    status: str = QueryRunStatus.PENDING.value,
+) -> QueryRun:
+    if status not in {item.value for item in QueryRunStatus}:
+        raise ValueError(f"Invalid query run status: {status}")
+    query_run = QueryRun(
+        id=uuid.uuid4(),
+        session_id=session_id,
+        user_id=user_id,
+        message_id=message_id,
+        status=status,
+    )
+    db.add(query_run)
+    await db.flush()
+    return query_run
+
+
+async def add_query_run_documents(
+    db: AsyncSession,
+    query_run_id: uuid.UUID,
+    resolved_documents: list[tuple[uuid.UUID, uuid.UUID]],
+) -> list[QueryRunDocument]:
+    rows = []
+    for document_id, version_id in resolved_documents:
+        row = QueryRunDocument(
+            query_run_id=query_run_id,
+            document_id=document_id,
+            version_id=version_id,
+        )
+        db.add(row)
+        rows.append(row)
+    await db.flush()
+    return rows
 
 
 # -----------------------------------------------------------------------------

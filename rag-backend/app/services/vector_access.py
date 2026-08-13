@@ -8,19 +8,20 @@ from qdrant_client.http import models as qdrant_models
 
 
 def owned_vector_filter(
-    authenticated_user_id: uuid.UUID, document_ids: list[uuid.UUID]
+    authenticated_user_id: uuid.UUID, version_ids: list[uuid.UUID]
 ) -> qdrant_models.Filter:
-    """Constrain a vector operation to documents owned by the authenticated user."""
+    """Constrain vector retrieval to the authenticated user and resolved versions."""
     conditions = [
         qdrant_models.FieldCondition(
             key="user_id", match=qdrant_models.MatchValue(value=str(authenticated_user_id))
         )
     ]
-    if document_ids:
-        conditions.append(
-            qdrant_models.FieldCondition(
-                key="document_id",
-                match=qdrant_models.MatchAny(any=[str(document_id) for document_id in document_ids]),
-            )
+    if not version_ids:
+        raise ValueError("Vector retrieval requires at least one resolved version_id")
+    conditions.append(
+        qdrant_models.FieldCondition(
+            key="version_id",
+            match=qdrant_models.MatchAny(any=[str(version_id) for version_id in version_ids]),
         )
+    )
     return qdrant_models.Filter(must=conditions)
