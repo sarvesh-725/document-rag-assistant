@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database.models import (
     User, Document, DocumentVersion, DocumentParent, ChatSession, Message,
@@ -100,10 +101,15 @@ async def get_document_by_id(
 
 
 async def list_user_documents(db: AsyncSession, user_id: uuid.UUID) -> List[Document]:
-    stmt = select(Document).where(
-        Document.user_id == user_id,
-        Document.deleted_at.is_(None),
-    ).order_by(Document.created_at.desc())
+    stmt = (
+        select(Document)
+        .options(selectinload(Document.versions))
+        .where(
+            Document.user_id == user_id,
+            Document.deleted_at.is_(None),
+        )
+        .order_by(Document.created_at.desc())
+    )
     
     result = await db.execute(stmt)
     return list(result.scalars().all())

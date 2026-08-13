@@ -150,11 +150,30 @@ async def upload_document(
     }
 
 
-@router.get("/global")
-async def get_global_documents(
-    current_user: User = Depends(get_current_user),
-    db=Depends(get_db),
-):
+def _document_list_status(document) -> str:
+    """Expose the effective current-version status in the list contract."""
+    if document.status in {"DELETING", "DELETED"}:
+        return document.status
+
+    versions = list(getattr(document, "versions", []) or [])
+    current_version_id = getattr(document, "current_version_id", None)
+    current_version = next(
+        (version for version in versions if version.id == current_version_id),
+        None,
+    )
+    version = current_version or (
+        max(versions, key=lambda item: getattr(item, "version_number", 0))
+        if versions
+        else None
+    )
+    if version is not None and version.status == VersionStatus.FAILED.value:
+        return VersionStatus.FAILED.value
+    if document.status in {"UPLOADING", "PROCESSING"}:
+        return VersionStatus.PROCESSING.value
+    return document.status
+
+
+async def _list_documents(current_user: User, db):
     """Return all live documents belonging to the authenticated user."""
     docs = await list_user_documents(db, current_user.id)
     return [
@@ -163,11 +182,29 @@ async def get_global_documents(
             "display_name": d.display_name,
             "original_filename": d.original_filename,
             "created_at": d.created_at.isoformat() if d.created_at else None,
-            "status": d.status,
+            "status": _document_list_status(d),
             "duplicate_index": d.duplicate_index,
         }
         for d in docs
     ]
+
+
+@router.get("")
+async def get_documents(
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Return the authenticated user's non-deleted global document library."""
+    return await _list_documents(current_user, db)
+
+
+@router.get("/global", include_in_schema=False)
+async def get_global_documents(
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Compatibility alias for the pre-Phase-17 list path."""
+    return await _list_documents(current_user, db)
 
 
 @router.delete("/{document_id}")
