@@ -2,14 +2,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
-import SelectedFilesBar, { FileItem } from './components/SelectedFilesBar';
+import SelectedDocumentsBar from './components/SelectedDocumentsBar';
 import ChatInputDock from './components/ChatInputDock';
+import { Document } from './types';
 import { Bot, User as UserIcon, Loader2, KeyRound, AlertTriangle } from 'lucide-react';
 
 interface Message {
   role: 'user' | 'assistant';
   text: string;
-  bound_files?: string[];
+  bound_document_ids?: string[];
 }
 
 export default function Home() {
@@ -23,9 +24,8 @@ export default function Home() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputQuestion, setInputQuestion] = useState('');
-  const [sessionFiles, setSessionFiles] = useState<FileItem[]>([]);
-  const [globalFiles, setGlobalFiles] = useState<FileItem[]>([]);
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [queryLoading, setQueryLoading] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -42,69 +42,54 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const fetchFiles = async () => {
-    if (!activeSessionId || !token) return;
+  const fetchDocuments = async () => {
+    if (!token) return;
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/sessions/files?session_id=${activeSessionId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.status === 401) {
         handleLogout();
         return;
       }
       if (res.ok) {
         const data = await res.json();
-        setSessionFiles(data);
+        setDocuments(data);
       }
     } catch (err) {
-      console.error('Failed to fetch files:', err);
+      console.error('Failed to fetch documents:', err);
     }
   };
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    const hasProcessing = sessionFiles.some((f) => f.status === 'processing');
+    const hasProcessing = documents.some((document) => document.status === 'PROCESSING');
     if (hasProcessing) {
       timer = setInterval(() => {
-        fetchFiles();
+        fetchDocuments();
       }, 3000);
     }
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [sessionFiles, activeSessionId, token]);
-
-  useEffect(() => {
-    fetchFiles();
-  }, [activeSessionId, token]);
-
-  const fetchGlobalFiles = async () => {
-    if (!token) return;
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/global`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setGlobalFiles(data);
-      }
-    } catch (err) {
-      console.error('Error fetching global files:', err);
-    }
-  };
+  }, [documents, token]);
 
   useEffect(() => {
     if (token) {
-      fetchGlobalFiles();
+      fetchDocuments();
     }
   }, [token]);
+
+  useEffect(() => {
+    const availableIds = new Set(
+      documents
+        .filter((document) => document.status !== 'DELETING')
+        .map((document) => document.document_id)
+    );
+    setSelectedDocumentIds((previous) =>
+      previous.filter((documentId) => availableIds.has(documentId))
+    );
+  }, [documents]);
 
   useEffect(() => {
     const loadSessionHistory = async () => {
@@ -124,8 +109,9 @@ export default function Home() {
           const mapped = data.items.map((msg: any) => {
             const role = msg.role;
             const text = msg.content || '';
-            const bound_files = msg.selected_document_snapshot?.document_ids || [];
-            return { role, text, bound_files };
+            const bound_document_ids = (msg.selected_document_snapshot?.documents || [])
+              .map((document: { document_id: string }) => document.document_id);
+            return { role, text, bound_document_ids };
           });
           setMessages(mapped);
         } else {
@@ -141,13 +127,13 @@ export default function Home() {
   }, [activeSessionId, token]);
 
 
-  const handleDeleteFile = async (document_id: string) => {
-    if (!activeSessionId || !token) return;
+  const handleDeleteDocument = async (document_id: string) => {
+    if (!token) return;
 
-    const previousFiles = [...sessionFiles];
-    const previousSelected = [...selectedFiles];
-    setSessionFiles(prev => prev.filter(f => f.document_id !== document_id));
-    setSelectedFiles(prev => prev.filter(f => f !== document_id));
+    const previousDocuments = [...documents];
+    const previousSelected = [...selectedDocumentIds];
+    setDocuments(prev => prev.filter(document => document.document_id !== document_id));
+    setSelectedDocumentIds(prev => prev.filter(id => id !== document_id));
 
     try {
       const res = await fetch(
@@ -166,13 +152,15 @@ export default function Home() {
       if (!res.ok) {
         const errData = await res.json();
         alert(errData.detail || 'Delete failed');
-        setSessionFiles(previousFiles); // Rollback
-        setSelectedFiles(previousSelected);
+        setDocuments(previousDocuments);
+        setSelectedDocumentIds(previousSelected);
+      } else {
+        await fetchDocuments();
       }
     } catch (err) {
       console.error('Failed to delete file:', err);
-      setSessionFiles(previousFiles); // Rollback
-      setSelectedFiles(previousSelected);
+      setDocuments(previousDocuments);
+      setSelectedDocumentIds(previousSelected);
     }
   };
 
@@ -231,8 +219,8 @@ export default function Home() {
     setToken(null);
     setActiveSessionId(null);
     setMessages([]);
-    setSessionFiles([]);
-    setSelectedFiles([]);
+    setDocuments([]);
+    setSelectedDocumentIds([]);
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -243,12 +231,12 @@ export default function Home() {
     setInputQuestion('');
     setQueryLoading(true);
 
-    const activeFilesList = selectedFiles;
+    const activeDocumentIds = selectedDocumentIds;
 
     setMessages((prev) => [
       ...prev,
-      { role: 'user', text: userQuestion, bound_files: activeFilesList },
-      { role: 'assistant', text: '', bound_files: activeFilesList }
+      { role: 'user', text: userQuestion, bound_document_ids: activeDocumentIds },
+      { role: 'assistant', text: '', bound_document_ids: activeDocumentIds }
     ]);
 
     try {
@@ -260,9 +248,9 @@ export default function Home() {
         },
         body: JSON.stringify({
           session_id: activeSessionId,
+          client_request_id: crypto.randomUUID(),
           question: userQuestion,
-          include_prev_files: true,
-          explicit_files: activeFilesList,
+          selected_document_ids: activeDocumentIds,
         }),
       });
 
@@ -326,7 +314,7 @@ export default function Home() {
           }
         }
       }
-      await fetchFiles();
+      await fetchDocuments();
     } catch (err: any) {
       setMessages((prev) => {
         const updated = [...prev];
@@ -454,16 +442,16 @@ export default function Home() {
                   className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                 >
                   {}
-                  {msg.role === 'user' && msg.bound_files && msg.bound_files.length > 0 && (
+                  {msg.role === 'user' && msg.bound_document_ids && msg.bound_document_ids.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-1 max-w-2xl">
-                      {msg.bound_files.map((fileId) => {
-                        const fileMatch = globalFiles.find(f => f.document_id === fileId) || sessionFiles.find(f => f.document_id === fileId);
-                        const displayName = fileMatch ? fileMatch.display_name : fileId;
+                      {msg.bound_document_ids.map((documentId) => {
+                        const document = documents.find(item => item.document_id === documentId);
+                        const displayName = document ? document.display_name : documentId;
                         return (
                           <span
-                            key={fileId}
+                            key={documentId}
                             className="bg-slate-900 border border-slate-800 text-slate-400 px-2.5 py-1 rounded-full text-[10px] flex items-center gap-1 font-semibold hover:text-slate-300 transition-colors"
-                            title={fileId}
+                            title={documentId}
                           >
                             📄 {displayName}
                           </span>
@@ -510,32 +498,25 @@ export default function Home() {
             {}
             <div className="p-4 border-t border-slate-900 bg-slate-950 shrink-0 flex flex-col gap-2">
               {(() => {
-                const allUniqueFilesMap = new Map<string, FileItem>();
-                globalFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
-                sessionFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
-                const allAvailableFiles = Array.from(allUniqueFilesMap.values());
-                return (
-                  <SelectedFilesBar
-                    files={allAvailableFiles.filter((f) => selectedFiles.includes(f.document_id))}
-                    onUnbind={async (doc_id) => setSelectedFiles(prev => prev.filter(f => f !== doc_id))}
-                    onDelete={handleDeleteFile}
-                  />
+                 return (
+                    <SelectedDocumentsBar
+                     documents={documents.filter((document) => selectedDocumentIds.includes(document.document_id))}
+                     onUnbind={async (documentId) => setSelectedDocumentIds(prev => prev.filter(id => id !== documentId))}
+                     onDelete={handleDeleteDocument}
+                   />
                 );
               })()}
               <ChatInputDock
                 token={token}
-                sessionId={activeSessionId}
                 inputQuestion={inputQuestion}
                 setInputQuestion={setInputQuestion}
                 onSubmit={handleSendMessage}
                 queryLoading={queryLoading}
-                sessionFiles={sessionFiles}
-                fetchFiles={fetchFiles}
-                selectedFiles={selectedFiles}
-                setSelectedFiles={setSelectedFiles}
-                onDelete={handleDeleteFile}
-                globalFiles={globalFiles}
-                fetchGlobalFiles={fetchGlobalFiles}
+                documents={documents}
+                fetchDocuments={fetchDocuments}
+                selectedDocumentIds={selectedDocumentIds}
+                setSelectedDocumentIds={setSelectedDocumentIds}
+                onDelete={handleDeleteDocument}
               />
             </div>
           </div>

@@ -2,38 +2,30 @@
 
 import React from 'react';
 import { FileText, X, Undo2, Loader2, AlertTriangle } from 'lucide-react';
+import { Document } from '../types';
 
-export interface FileItem {
-  document_id: string;
-  display_name: string;
-  original_filename: string;
-  created_at: string;
-  status: string;
-  duplicate_index: number;
-}
-
-interface SelectedFilesBarProps {
-  files: FileItem[];
+interface SelectedDocumentsBarProps {
+  documents: Document[];
   onUnbind: (document_id: string) => Promise<void>;
   onDelete: (document_id: string) => Promise<void>;
 }
 
-export default function SelectedFilesBar({
-  files,
+export default function SelectedDocumentsBar({
+  documents,
   onUnbind,
   onDelete
-}: SelectedFilesBarProps) {
-  if (!files || files.length === 0) return null;
+}: SelectedDocumentsBarProps) {
+  if (!documents || documents.length === 0) return null;
 
   return (
     <div className="w-full px-4 py-2 bg-slate-900/60 backdrop-blur-md border-t border-slate-800 flex items-center gap-2 overflow-x-auto scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
       <div className="flex items-center gap-2 pb-1">
-        {files.map((file) => {
-          const isProcessing = file.status === 'processing';
-          const isFailed = file.status === 'failed';
+        {documents.map((document) => {
+          const isProcessing = document.status === 'PROCESSING';
+          const isFailed = document.status === 'FAILED';
           return (
             <div
-              key={file.document_id}
+              key={document.document_id}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-all duration-200 shrink-0 ${
                 isProcessing
                   ? 'bg-indigo-950/40 border-indigo-500/30 text-indigo-300'
@@ -50,7 +42,7 @@ export default function SelectedFilesBar({
                 <FileText size={12} className="text-indigo-400" />
               )}
               
-              <span className="max-w-[120px] truncate">{file.display_name}</span>
+              <span className="max-w-[120px] truncate">{document.display_name}</span>
 
               {isProcessing ? (
                 <span className="text-[10px] text-indigo-400 font-semibold uppercase animate-pulse">
@@ -62,7 +54,7 @@ export default function SelectedFilesBar({
                     Failed
                   </span>
                   <button
-                    onClick={() => onDelete(file.document_id)}
+                    onClick={() => onDelete(document.document_id)}
                     className="flex items-center gap-0.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded px-1.5 py-0.5 transition-colors cursor-pointer text-[10px]"
                     title="Remove failed file from list"
                   >
@@ -71,7 +63,7 @@ export default function SelectedFilesBar({
                 </div>
               ) : (
                 <button
-                  onClick={() => onUnbind(file.document_id)}
+                  onClick={() => onUnbind(document.document_id)}
                   className="text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-700 transition-colors cursor-pointer"
                   title="Unselect file"
                 >

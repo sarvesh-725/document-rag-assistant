@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.routers.documents import router as documents_router
+from app.routers.ingestion import router as ingestion_router
 from app.routers.chat import router as chat_router
 from app.database.connection import get_db, engine, Base
 from app.database.models import User, ChatSession, Message
@@ -70,6 +71,7 @@ app.add_middleware(
 )
 
 app.include_router(documents_router)
+app.include_router(ingestion_router)
 app.include_router(chat_router)
 
 

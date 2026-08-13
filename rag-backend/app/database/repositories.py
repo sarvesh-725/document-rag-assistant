@@ -471,6 +471,22 @@ async def create_ingestion_job(
     return job
 
 
+async def get_ingestion_job_for_user(
+    db: AsyncSession, job_id: uuid.UUID, user_id: uuid.UUID
+) -> Optional[IngestionJob]:
+    """Fetch an ingestion job only through its owning document."""
+    stmt = (
+        select(IngestionJob)
+        .join(Document, Document.id == IngestionJob.document_id)
+        .where(
+            IngestionJob.id == job_id,
+            Document.user_id == user_id,
+        )
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 # -----------------------------------------------------------------------------
 # ConversationSummary & OutboxEvent
 # -----------------------------------------------------------------------------

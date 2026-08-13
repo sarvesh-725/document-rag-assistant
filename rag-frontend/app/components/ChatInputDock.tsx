@@ -2,38 +2,32 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Paperclip, Send, Loader2, Search, UploadCloud, CheckCircle } from 'lucide-react';
-import { FileItem } from './SelectedFilesBar';
+import { Document } from '../types';
 
 interface ChatInputDockProps {
   token: string;
-  sessionId: string;
   inputQuestion: string;
   setInputQuestion: (val: string) => void;
   onSubmit: (e: React.FormEvent) => void;
   queryLoading: boolean;
-  sessionFiles: FileItem[];
-  fetchFiles: () => Promise<void>;
-  selectedFiles: string[];
-  setSelectedFiles: React.Dispatch<React.SetStateAction<string[]>>;
+  documents: Document[];
+  fetchDocuments: () => Promise<void>;
+  selectedDocumentIds: string[];
+  setSelectedDocumentIds: React.Dispatch<React.SetStateAction<string[]>>;
   onDelete: (document_id: string) => Promise<void>;
-  globalFiles: FileItem[];
-  fetchGlobalFiles: () => Promise<void>;
 }
 
 export default function ChatInputDock({
   token,
-  sessionId,
   inputQuestion,
   setInputQuestion,
   onSubmit,
   queryLoading,
-  sessionFiles,
-  fetchFiles,
-  selectedFiles,
-  setSelectedFiles,
+  documents,
+  fetchDocuments,
+  selectedDocumentIds,
+  setSelectedDocumentIds,
   onDelete,
-  globalFiles,
-  fetchGlobalFiles
 }: ChatInputDockProps) {
   const [showOverlay, setShowOverlay] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,9 +39,9 @@ export default function ChatInputDock({
 
   useEffect(() => {
     if (showOverlay) {
-      fetchGlobalFiles();
+      fetchDocuments();
     }
-  }, [showOverlay, sessionFiles, fetchGlobalFiles]);
+  }, [showOverlay]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -59,36 +53,27 @@ export default function ChatInputDock({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const allUniqueFilesMap = new Map<string, FileItem>();
-  globalFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
-  sessionFiles.forEach(f => allUniqueFilesMap.set(f.document_id, f));
-
-  const allUniqueFiles = Array.from(allUniqueFilesMap.values())
+  const filteredDocuments = documents
     .filter((f) => f.display_name.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  const isActive = (file: FileItem) => {
-    return selectedFiles.includes(file.document_id);
+  const isActive = (document: Document) => {
+    return selectedDocumentIds.includes(document.document_id);
   };
 
-  const handleToggleFile = async (file: FileItem) => {
-    const active = isActive(file);
+  const handleToggleDocument = (document: Document) => {
+    const active = isActive(document);
     if (active) {
-      setSelectedFiles(prev => prev.filter(id => id !== file.document_id));
+      setSelectedDocumentIds(prev => prev.filter(id => id !== document.document_id));
     } else {
-      setSelectedFiles(prev => [...prev, file.document_id]);
+      setSelectedDocumentIds(prev => [...prev, document.document_id]);
     }
   };
-
-  const unselectedGlobalFiles = globalFiles
-    .filter((gf) => !selectedFiles.includes(gf.document_id));
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
     setUploading(true);
     setUploadError(null);
-
-    const isAlreadyPresent = sessionFiles.some((sf) => sf.original_filename === file.name);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -112,9 +97,9 @@ export default function ChatInputDock({
       const data = await res.json();
 
       setShowOverlay(false);
-      await fetchFiles();
-      if (data.document_id && !selectedFiles.includes(data.document_id)) {
-        setSelectedFiles(prev => [...prev, data.document_id]);
+      await fetchDocuments();
+      if (data.document_id && !selectedDocumentIds.includes(data.document_id)) {
+        setSelectedDocumentIds(prev => [...prev, data.document_id]);
       }
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload document');
@@ -164,9 +149,9 @@ export default function ChatInputDock({
       const data = await res.json();
 
       setShowOverlay(false);
-      await fetchFiles();
-      if (data.document_id && !selectedFiles.includes(data.document_id)) {
-        setSelectedFiles(prev => [...prev, data.document_id]);
+      await fetchDocuments();
+      if (data.document_id && !selectedDocumentIds.includes(data.document_id)) {
+        setSelectedDocumentIds(prev => [...prev, data.document_id]);
       }
     } catch (err: any) {
       setUploadError(err.message || 'Failed to upload document');
@@ -244,40 +229,41 @@ export default function ChatInputDock({
 
             {}
             <div className="max-h-[160px] overflow-y-auto space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent pr-1">
-              {allUniqueFiles.map((file) => {
-                const active = isActive(file);
-                const isProcessing = file.status === 'processing';
-                const isFailed = file.status === 'failed';
+              {filteredDocuments.map((document) => {
+                const active = isActive(document);
+                const isProcessing = document.status === 'PROCESSING';
+                const isFailed = document.status === 'FAILED';
+                const isDeleting = document.status === 'DELETING';
 
                 return (
                   <div
-                    key={file.document_id}
+                    key={document.document_id}
                     onClick={() => {
-                      if (!isProcessing) {
-                        handleToggleFile(file);
+                      if (!isProcessing && !isDeleting && !isFailed) {
+                        handleToggleDocument(document);
                       }
                     }}
                     className={`flex items-center justify-between p-2 rounded-lg border transition-all duration-150 ${
                       active
                         ? 'bg-slate-800/80 border-indigo-500/30'
                         : 'bg-slate-950/30 border-slate-800/40 hover:border-slate-700/30'
-                    } ${isProcessing ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'} group`}
+                    } ${isProcessing || isDeleting || isFailed ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'} group`}
                   >
                     <div className="flex items-center gap-2 truncate">
                       <input
                         type="checkbox"
                         checked={active}
-                        disabled={isProcessing}
+                        disabled={isProcessing || isDeleting || isFailed}
                         onChange={() => {
-                          if (!isProcessing) {
-                            handleToggleFile(file);
+                          if (!isProcessing && !isDeleting && !isFailed) {
+                            handleToggleDocument(document);
                           }
                         }}
                         onClick={(e) => e.stopPropagation()}
                         className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-600 focus:ring-offset-slate-900 cursor-pointer disabled:cursor-not-allowed"
                       />
                       <span className="text-xs text-slate-300 font-medium truncate max-w-[220px]">
-                        {file.display_name}
+                        {document.display_name}
                       </span>
                     </div>
 
@@ -293,9 +279,9 @@ export default function ChatInputDock({
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          if (confirm(`Are you sure you want to permanently delete ${file.display_name}?`)) {
-                            await onDelete(file.document_id);
-                            fetchGlobalFiles();
+                          if (confirm(`Are you sure you want to permanently delete ${document.display_name}?`)) {
+                            await onDelete(document.document_id);
+                            await fetchDocuments();
                           }
                         }}
                         className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
@@ -308,7 +294,7 @@ export default function ChatInputDock({
                 );
               })}
 
-              {allUniqueFiles.length === 0 && (
+              {filteredDocuments.length === 0 && (
                 <p className="text-[11px] text-slate-500 italic text-center py-4">
                   No documents found in global index.
                 </p>
