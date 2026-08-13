@@ -2,6 +2,8 @@ from qdrant_client import QdrantClient
 from dotenv import load_dotenv
 import os
 
+from app.services.rag_engine import QDRANT_COLLECTION_NAME
+
 load_dotenv()
 try:
     print(f"Connecting to Qdrant at {os.getenv('QDRANT_ENDPOINT')}...")
@@ -11,9 +13,8 @@ try:
         timeout=60.0
     )
 
-    col_name = os.getenv('QDRANT_COLLECTION_NAME', 'document_chunks')
-    print(f"Deleting collection {col_name}...")
-    client.delete_collection(collection_name=col_name)
-    print(f"Collection '{col_name}' deleted.")
+    print(f"Deleting collection {QDRANT_COLLECTION_NAME}...")
+    client.delete_collection(collection_name=QDRANT_COLLECTION_NAME)
+    print(f"Collection '{QDRANT_COLLECTION_NAME}' deleted.")
 except Exception as e:
     print(f"Failed: {e}")

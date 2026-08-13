@@ -61,6 +61,8 @@ class ParsedChild:
     child_text: str = ""
     child_index: int = 0
     page: Optional[int] = None
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
     section: Optional[str] = None
     element_type: Optional[str] = None
     source_position: Optional[dict] = field(default_factory=dict)
@@ -246,6 +248,8 @@ def _build_children(
                 child_text=child_text,
                 child_index=global_child_index,
                 page=parent.page_start,
+                page_start=parent.page_start,
+                page_end=parent.page_end,
                 section=parent.section,
                 element_type=parent.element_type,
                 source_position={"parent_index": parent.parent_index, "child_index": global_child_index},

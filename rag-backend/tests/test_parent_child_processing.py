@@ -65,9 +65,13 @@ async def test_no_parent_text_in_child_vector_payload(monkeypatch):
     
     # Mock Qdrant client to intercept upsert payload
     mock_upsert = AsyncMock()
-    rag_engine.client.upsert = mock_upsert
-    rag_engine._get_embeddings = lambda: SimpleNamespace(embed_documents=lambda x: [[0.0]] * len(x))
-    rag_engine.init_qdrant = AsyncMock()
+    monkeypatch.setattr(rag_engine.client, "upsert", mock_upsert)
+    monkeypatch.setattr(
+        rag_engine,
+        "_get_embeddings",
+        lambda: SimpleNamespace(embed_documents=lambda x: [[0.0]] * len(x)),
+    )
+    monkeypatch.setattr(rag_engine, "init_qdrant", AsyncMock())
     
     await rag_engine.process_and_store_document(
         b"dummy",
@@ -84,6 +88,11 @@ async def test_no_parent_text_in_child_vector_payload(monkeypatch):
     
     assert "parent_id" in payload
     assert "parent_text" not in payload
+    assert "page_start" in payload
+    assert "page_end" in payload
+    assert "embedding_profile" in payload
+    assert "parser_version" in payload
+    assert "chunking_version" in payload
 
 
 def test_page_propagation_across_parents(monkeypatch):

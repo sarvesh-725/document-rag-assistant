@@ -6,11 +6,9 @@ owns document/version state.
 """
 
 import os
-import io
-import hashlib
 import uuid
 import logging
-from typing import List
+from dataclasses import dataclass
 from dotenv import load_dotenv
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
@@ -18,7 +16,7 @@ from qdrant_client.http.models import PointStruct
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from app.services.chunking import (
     ParsedDocument, parse_parent_child_chunks, deterministic_point_id,
-    deterministic_parent_id, PARSER_VERSION, CHUNKING_VERSION,
+    deterministic_parent_id,
 )
 
 load_dotenv(override=True)
@@ -27,9 +25,32 @@ logger = logging.getLogger("rag_engine")
 
 QDRANT_ENDPOINT = os.getenv("QDRANT_ENDPOINT")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME", "document_chunks")
 
-MODEL_NAME = "models/gemini-embedding-2-preview"
+
+@dataclass(frozen=True)
+class EmbeddingProfile:
+    name: str
+    model: str
+    dimension: int
+    distance: qdrant_models.Distance
+    version: str
+    collection_name: str
+
+
+def _embedding_profile_from_env() -> EmbeddingProfile:
+    name = os.getenv("EMBEDDING_PROFILE_NAME", "gemini_embedding_v1")
+    return EmbeddingProfile(
+        name=name,
+        model=os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-2-preview"),
+        dimension=int(os.getenv("EMBEDDING_DIMENSION", "3072")),
+        distance=qdrant_models.Distance.COSINE,
+        version=os.getenv("EMBEDDING_PROFILE_VERSION", "1"),
+        collection_name=os.getenv("EMBEDDING_COLLECTION_NAME", f"document_chunks_{name}"),
+    )
+
+
+EMBEDDING_PROFILE = _embedding_profile_from_env()
+QDRANT_COLLECTION_NAME = EMBEDDING_PROFILE.collection_name
 
 client = AsyncQdrantClient(url=QDRANT_ENDPOINT, api_key=QDRANT_API_KEY)
 
@@ -39,10 +60,13 @@ _qdrant_initialized = False
 
 def _get_embeddings() -> GoogleGenerativeAIEmbeddings:
     """
-    Get the embedding model instance, fallback to a standard model if
-    the requested one fails, and cache it.
+    Get the configured embedding model instance and cache it.
+
+    A Qdrant collection is tied to exactly one embedding profile. Fallbacks are
+    deliberately forbidden because mixed dimensions/models inside one collection
+    make retrieval correctness undefined.
     """
-    global MODEL_NAME, _embeddings
+    global _embeddings
     if _embeddings is not None:
         return _embeddings
 
@@ -51,104 +75,92 @@ def _get_embeddings() -> GoogleGenerativeAIEmbeddings:
             "GOOGLE_API_KEY environment variable is not set in the environment or .env file."
         )
 
-    try:
-        embeddings = GoogleGenerativeAIEmbeddings(model=MODEL_NAME)
-        embeddings.embed_query("test connection")
-        _embeddings = embeddings
-        return _embeddings
-    except Exception as e:
-        logger.warning(f"Model initialization failed for {MODEL_NAME} with: {e}")
-        fallback_model = "models/text-embedding-004"
-        logger.warning(f"Attempting fallback to: {fallback_model}")
+    embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_PROFILE.model)
+    embeddings.embed_query("test connection")
+    _embeddings = embeddings
+    return _embeddings
+
+
+def _distance_label(distance) -> str:
+    value = getattr(distance, "value", distance)
+    return str(value).lower()
+
+
+def _collection_vector_config(collection_info) -> tuple[int, object]:
+    vectors_config = collection_info.config.params.vectors
+    if isinstance(vectors_config, dict):
+        raise RuntimeError(
+            f"Qdrant collection '{QDRANT_COLLECTION_NAME}' uses named vectors, "
+            "but this service is configured for a single unnamed vector."
+        )
+    return int(vectors_config.size), vectors_config.distance
+
+
+async def _verify_collection_matches_profile() -> None:
+    collection_info = await client.get_collection(collection_name=QDRANT_COLLECTION_NAME)
+    vector_size, distance = _collection_vector_config(collection_info)
+    expected_distance = _distance_label(EMBEDDING_PROFILE.distance)
+    actual_distance = _distance_label(distance)
+    if vector_size != EMBEDDING_PROFILE.dimension or actual_distance != expected_distance:
+        raise RuntimeError(
+            "Qdrant collection is incompatible with the configured embedding profile: "
+            f"collection={QDRANT_COLLECTION_NAME}, "
+            f"profile={EMBEDDING_PROFILE.name}, "
+            f"expected_dimension={EMBEDDING_PROFILE.dimension}, "
+            f"actual_dimension={vector_size}, "
+            f"expected_distance={expected_distance}, "
+            f"actual_distance={actual_distance}. "
+            "Create a new profile/collection or migrate explicitly; refusing to rebuild silently."
+        )
+
+
+async def _ensure_payload_indexes() -> None:
+    for field_name in ("user_id", "document_id", "version_id", "parent_id"):
         try:
-            embeddings = GoogleGenerativeAIEmbeddings(model=fallback_model)
-            embeddings.embed_query("test connection")
-            MODEL_NAME = fallback_model
-            _embeddings = embeddings
-            return _embeddings
-        except Exception as fallback_err:
-            logger.error(f"Fallback model also failed: {fallback_err}")
-            raise e
+            await client.create_payload_index(
+                collection_name=QDRANT_COLLECTION_NAME,
+                field_name=field_name,
+                field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
+            )
+        except Exception as idx_err:
+            logger.debug(f"Index creation for '{field_name}' failed (may already exist): {idx_err}")
 
 
 async def init_qdrant():
-    """Checks if collection exists in Qdrant and programmatically creates it if not."""
+    """Create or verify the configured Qdrant collection and payload indexes."""
     global _qdrant_initialized
     if _qdrant_initialized:
         return
 
-    try:
-        collections = await client.get_collections()
-        collection_names = [col.name for col in collections.collections]
+    collections = await client.get_collections()
+    collection_names = [col.name for col in collections.collections]
 
-        if QDRANT_COLLECTION_NAME not in collection_names:
-            embeddings = _get_embeddings()
-            sample_vector = embeddings.embed_query("test connection")
-            vector_size = len(sample_vector)
-
-            await client.create_collection(
-                collection_name=QDRANT_COLLECTION_NAME,
-                vectors_config=qdrant_models.VectorParams(
-                    size=vector_size, distance=qdrant_models.Distance.COSINE
-                ),
+    if QDRANT_COLLECTION_NAME not in collection_names:
+        sample_vector = _get_embeddings().embed_query("test connection")
+        if len(sample_vector) != EMBEDDING_PROFILE.dimension:
+            raise RuntimeError(
+                "Configured embedding profile dimension does not match the model output: "
+                f"profile={EMBEDDING_PROFILE.name}, "
+                f"model={EMBEDDING_PROFILE.model}, "
+                f"configured_dimension={EMBEDDING_PROFILE.dimension}, "
+                f"actual_dimension={len(sample_vector)}."
             )
-            logger.info(
-                f"Qdrant collection '{QDRANT_COLLECTION_NAME}' created with size {vector_size}."
-            )
+        await client.create_collection(
+            collection_name=QDRANT_COLLECTION_NAME,
+            vectors_config=qdrant_models.VectorParams(
+                size=EMBEDDING_PROFILE.dimension,
+                distance=EMBEDDING_PROFILE.distance,
+            ),
+        )
+        logger.info(
+            "Qdrant collection '%s' created for embedding profile '%s'.",
+            QDRANT_COLLECTION_NAME,
+            EMBEDDING_PROFILE.name,
+        )
 
-        try:
-            await client.create_payload_index(
-                collection_name=QDRANT_COLLECTION_NAME,
-                field_name="user_id",
-                field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception as idx_err:
-            logger.debug(f"Index creation for 'user_id' failed (may already exist): {idx_err}")
-
-        try:
-            await client.create_payload_index(
-                collection_name=QDRANT_COLLECTION_NAME,
-                field_name="document_id",
-                field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception as idx_err:
-            logger.debug(f"Index creation for 'document_id' failed (may already exist): {idx_err}")
-
-        try:
-            await client.create_payload_index(
-                collection_name=QDRANT_COLLECTION_NAME,
-                field_name="version_id",
-                field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception as idx_err:
-            logger.debug(f"Index creation for 'version_id' failed (may already exist): {idx_err}")
-
-        try:
-            await client.create_payload_index(
-                collection_name=QDRANT_COLLECTION_NAME,
-                field_name="content_hash",
-                field_schema=qdrant_models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception as idx_err:
-            logger.debug(f"Index creation for 'content_hash' failed (may already exist): {idx_err}")
-
-        for field_name in ("parent_id", "chunk_id"):
-            try:
-                await client.create_payload_index(
-                    collection_name=QDRANT_COLLECTION_NAME,
-                    field_name=field_name,
-                    field_schema=(
-                        qdrant_models.PayloadSchemaType.INTEGER
-                        if field_name == "chunk_id"
-                        else qdrant_models.PayloadSchemaType.KEYWORD
-                    ),
-                )
-            except Exception as idx_err:
-                logger.debug(f"Index creation for '{field_name}' failed (may already exist): {idx_err}")
-
-        _qdrant_initialized = True
-    except Exception as e:
-        logger.error(f"Failed to check or initialize Qdrant collection: {e}")
+    await _verify_collection_matches_profile()
+    await _ensure_payload_indexes()
+    _qdrant_initialized = True
 
 
 def deterministic_point_id(version_id: uuid.UUID | str, chunk_id: int) -> str:
@@ -171,8 +183,8 @@ async def process_and_store_document(
 ) -> int:
     """
     Takes raw file bytes from an upload, parses the text using unstructured,
-    generates an MD5 hash of the bytes, chunks the text into Parent and Child chunks,
-    generates embeddings for Children, and saves them to Qdrant Cloud.
+    chunks the text into Parent and Child chunks, generates embeddings for
+    Children, and saves them to Qdrant Cloud.
 
     Re-running this function for the same version produces the same point IDs.
     It only upserts points belonging to the supplied version; it never purges
@@ -182,8 +194,6 @@ async def process_and_store_document(
         raise ValueError("File content is empty.")
 
     await init_qdrant()
-
-    file_hash = hashlib.md5(file_bytes).hexdigest()
 
     parsed = parsed or parse_parent_child_chunks(file_bytes, filename, version_id, document_id)
     children = parsed.children
@@ -200,20 +210,17 @@ async def process_and_store_document(
             "user_id": str(user_id),
             "document_id": str(document_id),
             "version_id": str(version_id),
-            "child_id": child.id,
             "parent_id": child.parent_id,
             "chunk_id": child.child_index,
-            "filename": filename,
-            "content_hash": file_hash,
-            "source": filename,
             "child_text": child.child_text,
-            "page": child.page,
+            "page_start": child.page_start,
+            "page_end": child.page_end,
             "section": child.section,
             "element_type": child.element_type,
             "source_position": child.source_position,
-            "parser_version": PARSER_VERSION,
-            "chunking_version": CHUNKING_VERSION,
-            "embedding": vector,
+            "embedding_profile": EMBEDDING_PROFILE.name,
+            "parser_version": child.parser_version,
+            "chunking_version": child.chunking_version,
         }
 
         points.append(PointStruct(id=point_id, vector=vector, payload=payload))

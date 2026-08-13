@@ -25,6 +25,32 @@ class FakeQdrant:
         self.deletes.append(kwargs)
 
 
+class FakeCollections:
+    collections = [SimpleNamespace(name=rag_engine.QDRANT_COLLECTION_NAME)]
+
+
+class FakeCollectionInfo:
+    config = SimpleNamespace(
+        params=SimpleNamespace(
+            vectors=SimpleNamespace(
+                size=rag_engine.EMBEDDING_PROFILE.dimension + 1,
+                distance=rag_engine.EMBEDDING_PROFILE.distance,
+            )
+        )
+    )
+
+
+class IncompatibleQdrant(FakeQdrant):
+    async def get_collections(self):
+        return FakeCollections()
+
+    async def get_collection(self, **kwargs):
+        return FakeCollectionInfo()
+
+    async def create_payload_index(self, **kwargs):
+        pass
+
+
 @pytest.mark.asyncio
 async def test_same_version_ingestion_twice_reuses_point_ids(monkeypatch):
     document_id, version_id, user_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -64,6 +90,14 @@ async def test_same_version_ingestion_twice_reuses_point_ids(monkeypatch):
     assert payload["version_id"] == str(version_id)
     assert payload["parent_id"]
     assert payload["chunk_id"] == 0
+    assert payload["embedding_profile"] == rag_engine.EMBEDDING_PROFILE.name
+    assert payload["parser_version"] == chunking.PARSER_VERSION
+    assert payload["chunking_version"] == chunking.CHUNKING_VERSION
+    assert {"page_start", "page_end", "section", "element_type", "source_position"} <= payload.keys()
+    assert "filename" not in payload
+    assert "source" not in payload
+    assert "content_hash" not in payload
+    assert "embedding" not in payload
 
 
 def test_point_id_is_deterministic_only_for_version_and_chunk():
@@ -78,6 +112,40 @@ def test_vector_writer_has_no_filename_based_delete_path():
 
     source = inspect.getsource(rag_engine.process_and_store_document)
     assert ".delete(" not in source
+    assert '"filename"' not in source
     assert 'key="filename"' not in source
     assert '"document_id"' in source
     assert '"version_id"' in source
+
+
+def test_collection_name_comes_from_embedding_profile():
+    assert rag_engine.QDRANT_COLLECTION_NAME == rag_engine.EMBEDDING_PROFILE.collection_name
+
+
+def test_embedding_initialization_does_not_fallback(monkeypatch):
+    calls = []
+
+    class BrokenEmbeddings:
+        def __init__(self, model):
+            calls.append(model)
+
+        def embed_query(self, text):
+            raise RuntimeError("model unavailable")
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(rag_engine, "_embeddings", None)
+    monkeypatch.setattr(rag_engine, "GoogleGenerativeAIEmbeddings", BrokenEmbeddings)
+
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        rag_engine._get_embeddings()
+
+    assert calls == [rag_engine.EMBEDDING_PROFILE.model]
+
+
+@pytest.mark.asyncio
+async def test_init_qdrant_fails_on_incompatible_existing_collection(monkeypatch):
+    monkeypatch.setattr(rag_engine, "client", IncompatibleQdrant())
+    monkeypatch.setattr(rag_engine, "_qdrant_initialized", False)
+
+    with pytest.raises(RuntimeError, match="incompatible"):
+        await rag_engine.init_qdrant()

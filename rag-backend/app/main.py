@@ -32,6 +32,7 @@ from app.broker import broker
 import taskiq_fastapi
 
 from app.services.intent_classifier import train_classifier
+from app.services.rag_engine import init_qdrant
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
 
     # Train the hybrid intent router in memory
     train_classifier()
+    await init_qdrant()
 
     yield
 
