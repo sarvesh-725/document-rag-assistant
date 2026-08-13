@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import app.services.rag_engine as rag_engine
+import app.services.chunking as chunking
 
 
 class FakeEmbeddings:
@@ -39,8 +40,8 @@ async def test_same_version_ingestion_twice_reuses_point_ids(monkeypatch):
     monkeypatch.setattr(rag_engine, "client", qdrant)
     monkeypatch.setattr(rag_engine, "init_qdrant", AsyncMock())
     monkeypatch.setattr(rag_engine, "_get_embeddings", lambda: FakeEmbeddings())
-    monkeypatch.setattr(rag_engine, "UnstructuredLoader", FakeLoader)
-    monkeypatch.setattr(rag_engine, "TokenTextSplitter", lambda chunk_size, chunk_overlap: SimpleNamespace(
+    monkeypatch.setattr(chunking, "UnstructuredLoader", FakeLoader)
+    monkeypatch.setattr(chunking, "TokenTextSplitter", lambda chunk_size, chunk_overlap: SimpleNamespace(
         split_text=lambda text: [text] if chunk_size > 128 else [text]
     ))
 

@@ -16,8 +16,10 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
 from qdrant_client.http.models import PointStruct
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_unstructured import UnstructuredLoader
-from langchain_text_splitters import TokenTextSplitter
+from app.services.chunking import (
+    ParsedDocument, parse_parent_child_chunks, deterministic_point_id,
+    deterministic_parent_id, PARSER_VERSION, CHUNKING_VERSION,
+)
 
 load_dotenv(override=True)
 
@@ -165,6 +167,7 @@ async def process_and_store_document(
     document_id: uuid.UUID | str,
     version_id: uuid.UUID | str,
     filename: str,
+    parsed: ParsedDocument | None = None,
 ) -> int:
     """
     Takes raw file bytes from an upload, parses the text using unstructured,
@@ -182,68 +185,42 @@ async def process_and_store_document(
 
     file_hash = hashlib.md5(file_bytes).hexdigest()
 
-    try:
-        loader = UnstructuredLoader(
-            file=io.BytesIO(file_bytes),
-            api_key=os.environ.get("UNSTRUCTURED_API_KEY"),
-            url=os.environ.get("UNSTRUCTURED_API_URL"),
-            partition_via_api=True,
-            strategy="hi_res",
-        )
-        docs = loader.load()
-        text = "\n\n".join([doc.page_content for doc in docs])
-        if not text.strip():
-            raise ValueError("Extracted text is empty or could not be parsed.")
-    except Exception as e:
-        raise RuntimeError(f"Error parsing document with Unstructured loader: {e}")
-
-    # Parent-Child Chunking Strategy
-    parent_splitter = TokenTextSplitter(chunk_size=1024, chunk_overlap=100)
-    child_splitter = TokenTextSplitter(chunk_size=128, chunk_overlap=20)
-
-    parents = parent_splitter.split_text(text)
-    
-    child_chunks = []
-    parent_texts = []
-    parent_indices = []
-    
-    for parent_index, parent in enumerate(parents):
-        children = child_splitter.split_text(parent)
-        for child in children:
-            child_chunks.append(child)
-            parent_texts.append(parent)
-            parent_indices.append(parent_index)
-
-    if not child_chunks:
+    parsed = parsed or parse_parent_child_chunks(file_bytes, filename, version_id, document_id)
+    children = parsed.children
+    if not children:
         return 0
 
     embeddings = _get_embeddings()
-    embeddings_list = embeddings.embed_documents(child_chunks)
+    embeddings_list = embeddings.embed_documents([child.child_text for child in children])
 
     points = []
-    for i, (child, parent, parent_index, vector) in enumerate(zip(child_chunks, parent_texts, parent_indices, embeddings_list)):
-        point_id = deterministic_point_id(version_id, i)
-        parent_id = deterministic_parent_id(version_id, parent_index)
-
+    for child, vector in zip(children, embeddings_list):
+        point_id = child.id
         payload = {
             "user_id": str(user_id),
             "document_id": str(document_id),
             "version_id": str(version_id),
-            "parent_id": parent_id,
-            "chunk_id": i,
+            "child_id": child.id,
+            "parent_id": child.parent_id,
+            "chunk_id": child.child_index,
             "filename": filename,
             "content_hash": file_hash,
             "source": filename,
-            "text": child,
-            "child_text": child,
-            "parent_text": parent,
+            "child_text": child.child_text,
+            "page": child.page,
+            "section": child.section,
+            "element_type": child.element_type,
+            "source_position": child.source_position,
+            "parser_version": PARSER_VERSION,
+            "chunking_version": CHUNKING_VERSION,
+            "embedding": vector,
         }
 
         points.append(PointStruct(id=point_id, vector=vector, payload=payload))
 
     await client.upsert(collection_name=QDRANT_COLLECTION_NAME, points=points)
 
-    return len(child_chunks)
+    return len(children)
 
 
 async def delete_version_vectors(

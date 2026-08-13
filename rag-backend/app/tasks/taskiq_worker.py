@@ -97,7 +97,12 @@ async def async_process_document_task(
             if not content:
                 raise NonRetryableIngestionError("Stored source is empty", "EMPTY_SOURCE")
             await transition_stage(db, job_uuid, IngestionStage.PARSE)
+            from app.services.chunking import parse_parent_child_chunks, PARSER_VERSION, CHUNKING_VERSION
+            parsed = parse_parent_child_chunks(content, document.original_filename, version_uuid, document_uuid)
             await transition_stage(db, job_uuid, IngestionStage.CHUNK)
+            from app.database.repositories import replace_version_parents
+            await replace_version_parents(db, version_uuid, parsed.parents)
+            await db.commit()
             await transition_stage(db, job_uuid, IngestionStage.EMBED)
             await transition_stage(db, job_uuid, IngestionStage.INDEX)
             from app.services.rag_engine import process_and_store_document
@@ -107,6 +112,7 @@ async def async_process_document_task(
                 document_id=document_uuid,
                 version_id=version_uuid,
                 filename=document.original_filename,
+                parsed=parsed,
             )
             if not indexed_chunks:
                 raise NonRetryableIngestionError("No indexable content was produced", "EMPTY_INDEX")

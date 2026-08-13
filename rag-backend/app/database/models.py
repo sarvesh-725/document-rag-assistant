@@ -149,9 +149,41 @@ class DocumentVersion(Base):
     document: Mapped["Document"] = relationship(
         "Document", back_populates="versions", foreign_keys=[document_id]
     )
+    parents: Mapped[List["DocumentParent"]] = relationship(
+        "DocumentParent", back_populates="version", cascade="all, delete-orphan",
+        order_by="DocumentParent.parent_index",
+    )
 
     __table_args__ = (
         UniqueConstraint("document_id", "version_number", name="uq_doc_version"),
+    )
+
+
+class DocumentParent(Base):
+    __tablename__ = "document_parents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    parent_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    page_start: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    section: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    element_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source_position: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    parser_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    chunking_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    version: Mapped["DocumentVersion"] = relationship("DocumentVersion", back_populates="parents")
+
+    __table_args__ = (
+        UniqueConstraint("version_id", "parent_index", name="uq_document_parent_index"),
+        Index("ix_document_parents_version_index", "version_id", "parent_index"),
     )
 
 

@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
-    User, Document, DocumentVersion, ChatSession, Message,
+    User, Document, DocumentVersion, DocumentParent, ChatSession, Message,
     IngestionJob, QueryRun, QueryRunDocument, ConversationSummary, OutboxEvent,
 )
 from app.database.enums import DocumentStatus, VersionStatus, IngestionStatus, IngestionStage
@@ -183,6 +183,26 @@ async def set_current_version(
     version.updated_at = now
     await db.flush()
     return True
+
+
+async def replace_version_parents(db: AsyncSession, version_id: uuid.UUID, parents) -> list[DocumentParent]:
+    """Persist the canonical parent snapshot for a version, idempotently."""
+    from sqlalchemy import delete
+    await db.execute(delete(DocumentParent).where(DocumentParent.version_id == version_id))
+    rows = []
+    for parent in parents:
+        row = DocumentParent(
+            id=uuid.UUID(str(parent.id)), version_id=version_id,
+            parent_index=parent.parent_index, text=parent.text,
+            page_start=parent.page_start, page_end=parent.page_end,
+            section=parent.section, element_type=parent.element_type,
+            source_position=parent.source_position,
+            parser_version=parent.parser_version,
+            chunking_version=parent.chunking_version,
+        )
+        db.add(row); rows.append(row)
+    await db.flush()
+    return rows
 
 
 # -----------------------------------------------------------------------------
