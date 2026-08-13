@@ -9,6 +9,7 @@ import {
   publishCrossTabEvent,
   subscribeToCrossTabEvents,
 } from './lib/crossTabSync';
+import { SseParser } from './lib/sse';
 import { Bot, User as UserIcon, Loader2, KeyRound, AlertTriangle } from 'lucide-react';
 
 interface Message {
@@ -319,54 +320,60 @@ export default function Home() {
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder('utf-8');
-      let buffer = '';
+      const parser = new SseParser();
+      const handleSseEvent = (event: { event: string; data: unknown }) => {
+        const data = (event.data || {}) as Record<string, unknown>;
+        if (event.event === 'token') {
+          const text = typeof data.text === 'string' ? data.text : '';
+          if (!text) return;
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                text: updated[lastIdx].text + text,
+              };
+            }
+            return updated;
+          });
+        } else if (event.event === 'error') {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                text: `Error: ${String(data.message || 'Generation failed')}`,
+              };
+            }
+            return updated;
+          });
+        } else if (event.event === 'cancelled') {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant' && !updated[lastIdx].text) {
+              updated[lastIdx] = { ...updated[lastIdx], text: 'Generation cancelled.' };
+            }
+            return updated;
+          });
+        }
+        // message_start, retrieval_complete, source, and message_complete
+        // update protocol state but do not contain assistant token text.
+      };
 
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const cleanLine = line.trim();
-            if (cleanLine.startsWith('data: ')) {
-              const jsonStr = cleanLine.substring(6);
-              try {
-                const parsed = JSON.parse(jsonStr);
-                if (parsed.text) {
-                  setMessages((prev) => {
-                    const updated = [...prev];
-                    const lastIdx = updated.length - 1;
-                    if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
-                      updated[lastIdx] = {
-                        ...updated[lastIdx],
-                        text: updated[lastIdx].text + parsed.text
-                      };
-                    }
-                    return updated;
-                  });
-                } else if (parsed.error) {
-                  setMessages((prev) => {
-                    const updated = [...prev];
-                    const lastIdx = updated.length - 1;
-                    if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
-                      updated[lastIdx] = {
-                        ...updated[lastIdx],
-                        text: `Error: ${parsed.error}`
-                      };
-                    }
-                    return updated;
-                  });
-                }
-              } catch (err) {
-              }
-            }
+          for (const event of parser.push(decoder.decode(value, { stream: true }))) {
+            handleSseEvent(event);
           }
         }
       }
+      for (const event of parser.push(decoder.decode())) handleSseEvent(event);
+      for (const event of parser.finish()) handleSseEvent(event);
       await fetchDocuments();
       publishCrossTabEvent({ type: 'session_changed', session_id: activeSessionId });
     } catch (err: any) {

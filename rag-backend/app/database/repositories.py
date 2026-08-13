@@ -19,6 +19,7 @@ from app.database.models import (
 )
 from app.database.enums import (
     DocumentStatus, VersionStatus, IngestionStatus, IngestionStage, QueryRunStatus,
+    MessageStatus,
 )
 
 
@@ -300,6 +301,7 @@ async def create_message(
     client_request_id: Optional[str] = None,
     selected_document_snapshot: Optional[dict] = None,
     sources: Optional[dict] = None,
+    status: str = MessageStatus.PENDING.value,
 ) -> Message:
     """Append a row message with a transaction-safe, server-assigned sequence.
 
@@ -309,6 +311,8 @@ async def create_message(
     """
     if role not in {"user", "assistant", "system"}:
         raise ValueError("Message role must be user, assistant, or system")
+    if status not in {item.value for item in MessageStatus}:
+        raise ValueError(f"Invalid message status: {status}")
     if role == "user" and not client_request_id:
         raise ValueError("User messages require client_request_id")
     if role != "user" and client_request_id is not None:
@@ -350,6 +354,7 @@ async def create_message(
         client_request_id=client_request_id,
         selected_document_snapshot=selected_document_snapshot,
         sources=sources,
+        status=status,
     )
     db.add(message)
     await db.flush()
@@ -372,12 +377,58 @@ async def get_session_messages(
     return list(result.scalars().all())
 
 
+async def get_recent_session_messages(
+    db: AsyncSession,
+    session_id: uuid.UUID,
+    *,
+    limit: int,
+    exclude_message_id: Optional[uuid.UUID] = None,
+) -> List[Message]:
+    """Return the latest N messages in chronological order."""
+    if limit < 0:
+        raise ValueError("limit must not be negative")
+    if limit == 0:
+        return []
+    conditions = [Message.session_id == session_id]
+    if exclude_message_id is not None:
+        conditions.append(Message.id != exclude_message_id)
+    stmt = (
+        select(Message)
+        .where(*conditions)
+        .order_by(Message.sequence_number.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(reversed(result.scalars().all()))
+
+
 async def get_message_by_client_request_id(
     db: AsyncSession, session_id: uuid.UUID, client_request_id: str
 ) -> Optional[Message]:
     stmt = select(Message).where(
         Message.session_id == session_id,
         Message.client_request_id == client_request_id,
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_assistant_message_for_query(
+    db: AsyncSession, session_id: uuid.UUID, user_message_id: uuid.UUID
+) -> Optional[Message]:
+    """Return the first assistant row after a query's user message."""
+    user_message = await db.get(Message, user_message_id)
+    if user_message is None:
+        return None
+    stmt = (
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.role == "assistant",
+            Message.sequence_number > user_message.sequence_number,
+        )
+        .order_by(Message.sequence_number.asc())
+        .limit(1)
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -539,7 +590,16 @@ async def get_ingestion_job_for_user(
 async def get_or_create_conversation_summary(
     db: AsyncSession, session_id: uuid.UUID, new_summary: str, last_message_id: uuid.UUID
 ) -> ConversationSummary:
-    stmt = select(ConversationSummary).where(ConversationSummary.session_id == session_id)
+    # Lock the session aggregate before reading or creating its derived
+    # summary. This serializes concurrent summary updates.
+    await db.execute(
+        select(ChatSession.id).where(ChatSession.id == session_id).with_for_update()
+    )
+    stmt = (
+        select(ConversationSummary)
+        .where(ConversationSummary.session_id == session_id)
+        .with_for_update()
+    )
     result = await db.execute(stmt)
     summary = result.scalar_one_or_none()
 

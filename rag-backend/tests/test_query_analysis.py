@@ -66,6 +66,7 @@ async def test_no_documents_rejects_non_chitchat_in_application_policy(monkeypat
     session_id = uuid.uuid4()
     monkeypatch.setattr(chat, "get_session_by_id", AsyncMock(return_value=SimpleNamespace(id=session_id)))
     monkeypatch.setattr(chat, "get_message_by_client_request_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(chat, "create_message", AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())))
     classify = Mock(return_value=analysis(chitchat=False, retrieval=True))
     monkeypatch.setattr(chat, "classify_intent", classify)
     resolve = AsyncMock()

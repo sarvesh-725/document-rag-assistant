@@ -45,6 +45,20 @@ class Settings:
         self.login_failure_window_seconds = _positive_int("LOGIN_FAILURE_WINDOW_SECONDS", 900)
         self.login_backoff_base_seconds = _positive_int("LOGIN_BACKOFF_BASE_SECONDS", 2)
         self.login_backoff_max_seconds = _positive_int("LOGIN_BACKOFF_MAX_SECONDS", 300)
+        self.history_recent_messages = self._bounded_int(
+            "HISTORY_RECENT_MESSAGES", 4, minimum=0, maximum=20
+        )
+        self.model_context_limit = _positive_int("MODEL_CONTEXT_LIMIT", 32768)
+        self.expected_output_tokens = _positive_int("EXPECTED_OUTPUT_TOKENS", 1024)
+        self.summary_token_budget = _positive_int("SUMMARY_TOKEN_BUDGET", 512)
+        self.history_token_budget = _positive_int("HISTORY_TOKEN_BUDGET", 2048)
+
+    @staticmethod
+    def _bounded_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+        value = int(os.getenv(name, str(default)))
+        if not minimum <= value <= maximum:
+            raise RuntimeError(f"{name} must be between {minimum} and {maximum}")
+        return value
 
     def require_secret_key(self) -> str:
         if not self.secret_key or len(self.secret_key) < 32:

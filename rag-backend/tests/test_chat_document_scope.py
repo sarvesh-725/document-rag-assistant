@@ -77,6 +77,7 @@ async def test_query_rejects_invalid_selection_without_creating_query_run(monkey
     session_id = uuid.uuid4()
     monkeypatch.setattr(chat, "get_session_by_id", AsyncMock(return_value=SimpleNamespace(id=session_id)))
     monkeypatch.setattr(chat, "get_message_by_client_request_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(chat, "create_message", AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())))
     monkeypatch.setattr(chat, "create_query_run", AsyncMock())
     db = AsyncMock()
 

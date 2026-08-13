@@ -6,6 +6,7 @@ import uuid
 from dataclasses import asdict
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +19,7 @@ from app.database.repositories import (
     create_message,
     create_query_run,
     get_message_by_client_request_id,
+    get_assistant_message_for_query,
     get_query_run_for_message,
     get_session_by_id,
     transition_query_run_status,
@@ -27,17 +29,21 @@ from app.services.document_selection import (
     DocumentSelectionError,
     resolve_selected_documents,
 )
+from app.services.context_builder import ContextBuilder as PromptContextBuilder
+from app.services.conversation_context import ConversationContext, load_conversation_context
 from app.services.intent_classifier import QueryAnalysis, classify_intent
 from app.services.retrieval import (
     HybridRetriever,
     has_sufficient_evidence,
     serialize_context,
 )
+from app.services.sse import format_sse_event
 from app.services.vector_access import owned_vector_filter
 
 logger = logging.getLogger("chat_router")
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 hybrid_retriever = HybridRetriever()
+prompt_context_builder = PromptContextBuilder()
 NO_GROUNDING_RESPONSE = "The selected documents do not contain enough information to answer this question."
 
 
@@ -63,6 +69,9 @@ async def _existing_request_response(
             "client_request_id": message.client_request_id,
         }
 
+    assistant = None
+    if isinstance(db, AsyncSession):
+        assistant = await get_assistant_message_for_query(db, session_id, message.id)
     version_ids = [row.version_id for row in query_run.query_run_documents]
     query_analysis = (
         getattr(message, "selected_document_snapshot", None) or {}
@@ -73,6 +82,8 @@ async def _existing_request_response(
         "query_run_id": str(query_run.id),
         "client_request_id": message.client_request_id,
         "query_analysis": query_analysis,
+        "assistant_message_id": str(assistant.id) if assistant else None,
+        "answer": assistant.content if assistant else None,
         "retrieval_scope": {
             "user_id": str(user_id),
             "version_ids": [str(version_id) for version_id in version_ids],
@@ -85,6 +96,109 @@ async def _existing_request_response(
             owned_vector_filter(user_id, version_ids)
         )
     return response
+
+
+async def _existing_sse_response(state: dict):
+    yield format_sse_event(
+        "message_start",
+        {"message_id": state.get("message_id"), "query_run_id": state.get("query_run_id")},
+    )
+    yield format_sse_event("retrieval_complete", state.get("retrieval", {}))
+    if state.get("answer"):
+        yield format_sse_event("token", {"text": state["answer"]})
+    yield format_sse_event(
+        "message_complete",
+        {"status": state.get("status"), "message_id": state.get("message_id")},
+    )
+
+
+class _ClientDisconnected(Exception):
+    pass
+
+
+async def _stream_query_response(
+    *,
+    http_request: Request,
+    db: AsyncSession,
+    query_run,
+    assistant_message,
+    message,
+    context_package,
+    retrieval_result,
+):
+    """Emit typed SSE events and persist terminal/partial state."""
+    partial = ""
+    grounded = retrieval_result is None or has_sufficient_evidence(retrieval_result)
+    retrieval_data = {
+        "grounded": grounded,
+        "candidate_count": len(retrieval_result.reranked_candidates)
+        if retrieval_result is not None
+        else 0,
+        "context_count": len(context_package.evidence),
+    }
+    try:
+        yield format_sse_event(
+            "message_start",
+            {"message_id": str(assistant_message.id), "query_run_id": str(query_run.id)},
+        )
+        yield format_sse_event("retrieval_complete", retrieval_data)
+        for index, citation in enumerate(context_package.citations, start=1):
+            yield format_sse_event(
+                "source",
+                {
+                    "document_id": citation.get("document_id"),
+                    "display_name": citation.get("display_name"),
+                    "page": citation.get("page_start"),
+                    "source_id": f"S{index}",
+                },
+            )
+
+        answer = (
+            NO_GROUNDING_RESPONSE
+            if not grounded
+            else "Retrieved evidence is available for answer generation."
+        )
+        for token in answer.split(" "):
+            if await http_request.is_disconnected():
+                raise _ClientDisconnected()
+            token = token if not partial else f" {token}"
+            partial += token
+            yield format_sse_event("token", {"text": token})
+            await asyncio.sleep(0)
+
+        await update_message_status(
+            db, assistant_message.id, MessageStatus.COMPLETED.value, content=partial
+        )
+        transition_query_run_status(query_run, QueryRunStatus.COMPLETED.value)
+        await db.commit()
+        yield format_sse_event(
+            "message_complete",
+            {"status": MessageStatus.COMPLETED.value, "message_id": str(assistant_message.id)},
+        )
+    except (_ClientDisconnected, asyncio.CancelledError) as exc:
+        try:
+            await update_message_status(
+                db, assistant_message.id, MessageStatus.CANCELLED.value, content=partial
+            )
+            transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        if not isinstance(exc, asyncio.CancelledError):
+            yield format_sse_event(
+                "cancelled",
+                {"status": MessageStatus.CANCELLED.value, "message_id": str(assistant_message.id)},
+            )
+    except Exception as exc:
+        try:
+            await update_message_status(
+                db, assistant_message.id, MessageStatus.FAILED.value, content=partial
+            )
+            transition_query_run_status(query_run, QueryRunStatus.FAILED.value)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        yield format_sse_event("error", {"message": str(exc)})
 
 
 class ChatQueryRequest(BaseModel):
@@ -127,9 +241,35 @@ async def query_chat_stream(
         db, session_id, request.client_request_id
     )
     if existing_message is not None:
-        return await _existing_request_response(
+        existing_state = await _existing_request_response(
             db, existing_message, session_id, current_user.id
         )
+        if http_request is not None:
+            return StreamingResponse(
+                _existing_sse_response(existing_state),
+                media_type="text/event-stream",
+            )
+        return existing_state
+
+    message = await create_message(
+        db,
+        session_id,
+        MessageRole.USER.value,
+        content=request.question,
+        client_request_id=request.client_request_id,
+        selected_document_snapshot=None,
+    )
+    if getattr(message, "_existing_client_request", False):
+        await db.rollback()
+        existing_state = await _existing_request_response(
+            db, message, session_id, current_user.id
+        )
+        if http_request is not None:
+            return StreamingResponse(
+                _existing_sse_response(existing_state),
+                media_type="text/event-stream",
+            )
+        return existing_state
 
     query_analysis: QueryAnalysis = classify_intent(request.question)
     if not request.selected_document_ids and not query_analysis.is_obvious_chitchat:
@@ -158,7 +298,7 @@ async def query_chat_stream(
         if query_analysis.likely_needs_retrieval and resolved_version_ids
         else None
     )
-    selected_document_snapshot = {
+    message.selected_document_snapshot = {
         "query_analysis": asdict(query_analysis),
         "documents": [
             {
@@ -172,20 +312,8 @@ async def query_chat_stream(
     query_run = None
     retrieval_result = None
     assistant_message = None
+    context_package = None
     try:
-        message = await create_message(
-            db,
-            session_id,
-            MessageRole.USER.value,
-            content=request.question,
-            client_request_id=request.client_request_id,
-            selected_document_snapshot=selected_document_snapshot,
-        )
-        if getattr(message, "_existing_client_request", False):
-            await db.rollback()
-            return await _existing_request_response(
-                db, message, session_id, current_user.id
-            )
         query_run = await create_query_run(
             db,
             session_id,
@@ -209,10 +337,50 @@ async def query_chat_stream(
                 db,
             )
 
+        conversation_context = ConversationContext("", None, [])
+        if isinstance(db, AsyncSession):
+            conversation_context = await load_conversation_context(
+                db,
+                session_id,
+                message.id,
+            )
+        context_package = prompt_context_builder.build(
+            query_analysis=query_analysis,
+            conversation_summary=conversation_context.summary,
+            recent_messages=conversation_context.recent_messages,
+            retrieved_evidence=(retrieval_result.context if retrieval_result is not None else []),
+            current_question=query_analysis.normalized_query,
+            current_message_id=message.id,
+        )
+
         if http_request is not None and await http_request.is_disconnected():
             transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
             await db.commit()
             return {"status": QueryRunStatus.CANCELLED.value, "query_run_id": str(query_run.id)}
+
+        if http_request is not None:
+            assistant_message = await create_message(
+                db,
+                session_id,
+                MessageRole.ASSISTANT.value,
+                content="",
+                sources={"documents": context_package.citations},
+                status=MessageStatus.STREAMING.value,
+            )
+            await db.commit()
+            return StreamingResponse(
+                _stream_query_response(
+                    http_request=http_request,
+                    db=db,
+                    query_run=query_run,
+                    assistant_message=assistant_message,
+                    message=message,
+                    context_package=context_package,
+                    retrieval_result=retrieval_result,
+                ),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
         if retrieval_result is not None and not has_sufficient_evidence(retrieval_result):
             assistant_message = await create_message(
@@ -221,6 +389,7 @@ async def query_chat_stream(
                 MessageRole.ASSISTANT.value,
                 content=NO_GROUNDING_RESPONSE,
                 sources={"documents": []},
+                status=MessageStatus.COMPLETED.value,
             )
             await update_message_status(
                 db,
@@ -264,6 +433,13 @@ async def query_chat_stream(
             else [],
         },
         "grounded": retrieval_result is None or has_sufficient_evidence(retrieval_result),
+        "context_package": {
+            "summary": context_package.summary if context_package else "",
+            "recent_messages": context_package.recent_messages if context_package else [],
+            "evidence": context_package.evidence if context_package else [],
+            "citations": context_package.citations if context_package else [],
+            "estimated_tokens": context_package.estimated_tokens if context_package else 0,
+        },
     }
     if assistant_message is not None:
         response["answer"] = NO_GROUNDING_RESPONSE
