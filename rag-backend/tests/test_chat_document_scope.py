@@ -61,7 +61,8 @@ async def test_query_creates_query_run_document_rows_from_resolved_versions(monk
         str(document_b.version_id),
     ]
     assert "document_id" not in str(response["qdrant_filter"])
-    db.commit.assert_awaited_once()
+    assert db.commit.await_count == 2  # RUNNING snapshot, then COMPLETED
+    assert response["status"] == "COMPLETED"
 
 
 @pytest.mark.asyncio

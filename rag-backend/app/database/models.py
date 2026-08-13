@@ -335,7 +335,7 @@ class QueryRun(Base):
         UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True
     )
     status: Mapped[str] = mapped_column(
-        String(20), default=QueryRunStatus.PENDING, nullable=False
+        String(20), default=QueryRunStatus.RUNNING, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
@@ -350,6 +350,10 @@ class QueryRun(Base):
     message: Mapped[Optional["Message"]] = relationship("Message")
     query_run_documents: Mapped[List["QueryRunDocument"]] = relationship(
         "QueryRunDocument", back_populates="query_run", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_query_runs_status_created", "status", "created_at"),
     )
 
 

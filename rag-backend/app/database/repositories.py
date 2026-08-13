@@ -370,7 +370,7 @@ async def create_query_run(
     session_id: uuid.UUID,
     user_id: uuid.UUID,
     message_id: Optional[uuid.UUID] = None,
-    status: str = QueryRunStatus.PENDING.value,
+    status: str = QueryRunStatus.RUNNING.value,
 ) -> QueryRun:
     if status not in {item.value for item in QueryRunStatus}:
         raise ValueError(f"Invalid query run status: {status}")
@@ -383,6 +383,50 @@ async def create_query_run(
     )
     db.add(query_run)
     await db.flush()
+    return query_run
+
+
+def transition_query_run_status(
+    query_run: QueryRun, status: str, *, completed_at: Optional[datetime] = None
+) -> QueryRun:
+    """Apply one legal QueryRun lifecycle transition in memory.
+
+    The caller commits the surrounding transaction.  Terminal transitions are
+    idempotent, which lets cancellation and reconciliation safely race with a
+    normal completion path.
+    """
+    valid_statuses = {item.value for item in QueryRunStatus}
+    if status not in valid_statuses:
+        raise ValueError(f"Invalid query run status: {status}")
+    current_status = getattr(query_run, "status", QueryRunStatus.RUNNING.value)
+    if current_status in {
+        QueryRunStatus.COMPLETED.value,
+        QueryRunStatus.FAILED.value,
+        QueryRunStatus.CANCELLED.value,
+    }:
+        if current_status != status:
+            raise ValueError(
+                f"Cannot transition terminal QueryRun {query_run.id} "
+                f"from {current_status} to {status}"
+            )
+        return query_run
+    if current_status not in {
+        QueryRunStatus.PENDING.value,
+        QueryRunStatus.RUNNING.value,
+    }:
+        raise ValueError(f"Cannot transition QueryRun from {current_status}")
+    if (
+        current_status == QueryRunStatus.PENDING.value
+        and status != QueryRunStatus.RUNNING.value
+    ):
+        raise ValueError("A PENDING QueryRun must transition to RUNNING first")
+    query_run.status = status
+    if status in {
+        QueryRunStatus.COMPLETED.value,
+        QueryRunStatus.FAILED.value,
+        QueryRunStatus.CANCELLED.value,
+    }:
+        query_run.completed_at = completed_at or datetime.utcnow()
     return query_run
 
 

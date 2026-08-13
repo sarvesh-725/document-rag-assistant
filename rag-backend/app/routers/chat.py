@@ -1,26 +1,23 @@
-"""
-Chat routes — Phase 1 stub.
+"""Chat query routes and durable query-run lifecycle handling."""
 
-The streaming query endpoint is stubbed pending Phase 2+ rewrite
-with Message, QueryRun, and QueryRunDocument models.
-"""
-
+import asyncio
 import logging
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.connection import get_db
 from app.database.models import User
 from app.auth.security import get_current_user
-from app.database.enums import MessageRole
+from app.database.enums import MessageRole, QueryRunStatus
 from app.database.repositories import (
     add_query_run_documents,
     create_message,
     create_query_run,
     get_session_by_id,
+    transition_query_run_status,
 )
 from app.services.document_selection import (
     DocumentSelectionError,
@@ -50,12 +47,14 @@ async def query_chat_stream(
     request: ChatQueryRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    http_request: Request = None,
 ):
     """
     Resolve selected documents through PostgreSQL before vector retrieval.
 
-    Answer generation is still pending, but the durable query scope and
-    QueryRunDocument snapshot are established here.
+    The query run is committed as RUNNING before query work begins.  The
+    current endpoint's query work is the durable scope setup; later retrieval
+    stages use the same run and terminal transition helpers.
     """
     try:
         session_id = uuid.UUID(request.session_id)
@@ -96,29 +95,57 @@ async def query_chat_stream(
         ]
     }
 
-    message = await create_message(
-        db,
-        session_id,
-        MessageRole.USER.value,
-        content=request.question,
-        client_request_id=request.client_request_id,
-        selected_document_snapshot=selected_document_snapshot,
-    )
-    query_run = await create_query_run(
-        db,
-        session_id,
-        current_user.id,
-        message_id=message.id,
-    )
-    await add_query_run_documents(
-        db,
-        query_run.id,
-        [(document.document_id, document.version_id) for document in resolved_documents],
-    )
-    await db.commit()
+    query_run = None
+    try:
+        message = await create_message(
+            db,
+            session_id,
+            MessageRole.USER.value,
+            content=request.question,
+            client_request_id=request.client_request_id,
+            selected_document_snapshot=selected_document_snapshot,
+        )
+        query_run = await create_query_run(
+            db,
+            session_id,
+            current_user.id,
+            message_id=message.id,
+        )
+        await add_query_run_documents(
+            db,
+            query_run.id,
+            [(document.document_id, document.version_id) for document in resolved_documents],
+        )
+        # Make the active reference visible before any retrieval/generation
+        # work, including to document deletion cleanup.
+        await db.commit()
+
+        if http_request is not None and await http_request.is_disconnected():
+            transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
+            await db.commit()
+            return {"status": QueryRunStatus.CANCELLED.value, "query_run_id": str(query_run.id)}
+
+        transition_query_run_status(query_run, QueryRunStatus.COMPLETED.value)
+        await db.commit()
+    except asyncio.CancelledError:
+        if query_run is not None:
+            try:
+                transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+        raise
+    except Exception:
+        if query_run is not None:
+            try:
+                transition_query_run_status(query_run, QueryRunStatus.FAILED.value)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+        raise
 
     return {
-        "status": "PENDING",
+        "status": getattr(query_run, "status", QueryRunStatus.COMPLETED.value),
         "message_id": str(message.id),
         "query_run_id": str(query_run.id),
         "retrieval_scope": {

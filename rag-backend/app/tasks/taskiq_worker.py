@@ -25,6 +25,7 @@ from app.services.ingestion_state_machine import (
     reconcile_stale_jobs,
 )
 from app.services.document_cleanup import cleanup_deleted_document
+from app.services.query_run_lifecycle import reconcile_stale_query_runs
 from app.database.repositories import create_outbox_event
 from app.database.enums import IngestionStage
 
@@ -47,6 +48,13 @@ async def reconcile_ingestion_jobs_task() -> int:
     """Periodic safety net for jobs left in PENDING/RUNNING."""
     async with AsyncSessionLocal() as db:
         return await reconcile_stale_jobs(db)
+
+
+@broker.task(task_name="tasks.reconcile_query_runs")
+async def reconcile_query_runs_task() -> int:
+    """Cancel query runs left RUNNING by a crashed client or worker."""
+    async with AsyncSessionLocal() as db:
+        return await reconcile_stale_query_runs(db)
 
 
 @broker.task(task_name="tasks.process_document")
