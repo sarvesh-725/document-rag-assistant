@@ -52,12 +52,22 @@ class Settings:
         self.expected_output_tokens = _positive_int("EXPECTED_OUTPUT_TOKENS", 1024)
         self.summary_token_budget = _positive_int("SUMMARY_TOKEN_BUDGET", 512)
         self.history_token_budget = _positive_int("HISTORY_TOKEN_BUDGET", 2048)
+        self.outbox_polling_interval_seconds = self._positive_float(
+            "OUTBOX_POLLING_INTERVAL_SECONDS", 1.0
+        )
 
     @staticmethod
     def _bounded_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
         value = int(os.getenv(name, str(default)))
         if not minimum <= value <= maximum:
             raise RuntimeError(f"{name} must be between {minimum} and {maximum}")
+        return value
+
+    @staticmethod
+    def _positive_float(name: str, default: float) -> float:
+        value = float(os.getenv(name, str(default)))
+        if value <= 0:
+            raise RuntimeError(f"{name} must be positive")
         return value
 
     def require_secret_key(self) -> str:

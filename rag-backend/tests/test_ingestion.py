@@ -41,9 +41,10 @@ async def test_outbox_acknowledged_only_after_successful_publish():
     event = SimpleNamespace(id=uuid.uuid4(), event_type="DOCUMENT_INGESTION_REQUESTED", aggregate_id=uuid.uuid4(), payload={}, published_at=None, attempt_count=0)
     db = AsyncMock()
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [event])))
-    redis = AsyncMock()
-    assert await publish_pending_outbox_events(db, redis) == 1
+    enqueue = AsyncMock()
+    assert await publish_pending_outbox_events(db, enqueue=enqueue) == 1
     assert event.published_at is not None
+    enqueue.assert_awaited_once_with(event)
 
 
 @pytest.mark.asyncio
@@ -51,8 +52,7 @@ async def test_failed_outbox_publish_remains_unpublished():
     event = SimpleNamespace(id=uuid.uuid4(), event_type="DOCUMENT_INGESTION_REQUESTED", aggregate_id=uuid.uuid4(), payload={}, published_at=None, attempt_count=0)
     db = AsyncMock()
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [event])))
-    redis = AsyncMock()
-    redis.xadd.side_effect = RuntimeError("redis unavailable")
-    assert await publish_pending_outbox_events(db, redis) == 0
+    enqueue = AsyncMock(side_effect=RuntimeError("broker unavailable"))
+    assert await publish_pending_outbox_events(db, enqueue=enqueue) == 0
     assert event.published_at is None
     assert event.attempt_count == 1

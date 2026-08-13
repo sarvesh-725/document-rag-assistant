@@ -12,7 +12,6 @@ import uuid
 from app.broker import broker
 from app.services.storage import LocalStorageService
 from app.database.connection import AsyncSessionLocal
-from app.services.outbox import publish_pending_outbox_events
 from app.database.models import Document
 from app.services.ingestion_state_machine import (
     NonRetryableIngestionError,
@@ -34,13 +33,6 @@ logging.basicConfig(level=logging.INFO)
 
 STORAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "UPLOADS"))
 storage_service = LocalStorageService(STORAGE_ROOT)
-
-
-@broker.task(task_name="tasks.publish_outbox_events")
-async def publish_outbox_events_task() -> int:
-    """Retry unpublished domain events; failed rows remain eligible next run."""
-    async with AsyncSessionLocal() as db:
-        return await publish_pending_outbox_events(db)
 
 
 @broker.task(task_name="tasks.reconcile_ingestion_jobs")
