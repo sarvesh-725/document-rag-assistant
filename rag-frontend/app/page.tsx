@@ -269,6 +269,7 @@ export default function Home() {
     setQueryLoading(true);
 
     const activeDocumentIds = selectedDocumentIds;
+    const clientRequestId = crypto.randomUUID();
 
     setMessages((prev) => [
       ...prev,
@@ -277,19 +278,34 @@ export default function Home() {
     ]);
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/chat/query`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          session_id: activeSessionId,
-          client_request_id: crypto.randomUUID(),
-          question: userQuestion,
-          selected_document_ids: activeDocumentIds,
-        }),
+      const requestBody = JSON.stringify({
+        session_id: activeSessionId,
+        client_request_id: clientRequestId,
+        question: userQuestion,
+        selected_document_ids: activeDocumentIds,
       });
+      let response: Response;
+      try {
+        response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/chat/query`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: requestBody,
+        });
+      } catch {
+        // A retry must reuse the exact request ID so the server reconnects to
+        // the original Message/QueryRun instead of generating another answer.
+        response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/chat/query`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: requestBody,
+        });
+      }
 
       if (response.status === 401) {
         handleLogout();

@@ -22,6 +22,7 @@ async def test_query_creates_query_run_document_rows_from_resolved_versions(monk
     document_b = ResolvedQueryDocument(document_id=uuid.uuid4(), version_id=uuid.uuid4())
 
     monkeypatch.setattr(chat, "get_session_by_id", AsyncMock(return_value=SimpleNamespace(id=session_id)))
+    monkeypatch.setattr(chat, "get_message_by_client_request_id", AsyncMock(return_value=None))
     monkeypatch.setattr(chat, "resolve_selected_documents", AsyncMock(return_value=[document_a, document_b]))
     monkeypatch.setattr(chat, "create_message", AsyncMock(return_value=SimpleNamespace(id=message_id)))
     monkeypatch.setattr(chat, "create_query_run", AsyncMock(return_value=SimpleNamespace(id=query_run_id)))
@@ -70,6 +71,7 @@ async def test_query_rejects_invalid_selection_without_creating_query_run(monkey
     current_user = user()
     session_id = uuid.uuid4()
     monkeypatch.setattr(chat, "get_session_by_id", AsyncMock(return_value=SimpleNamespace(id=session_id)))
+    monkeypatch.setattr(chat, "get_message_by_client_request_id", AsyncMock(return_value=None))
     monkeypatch.setattr(chat, "create_query_run", AsyncMock())
     db = AsyncMock()
 

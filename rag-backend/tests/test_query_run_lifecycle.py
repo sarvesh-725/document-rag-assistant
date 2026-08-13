@@ -32,6 +32,7 @@ def request_for(*document_ids):
 def configure_query(monkeypatch, current_user, session_id, query_run):
     document = SimpleNamespace(document_id=uuid.uuid4(), version_id=uuid.uuid4())
     monkeypatch.setattr(chat, "get_session_by_id", AsyncMock(return_value=SimpleNamespace(id=session_id)))
+    monkeypatch.setattr(chat, "get_message_by_client_request_id", AsyncMock(return_value=None))
     monkeypatch.setattr(chat, "resolve_selected_documents", AsyncMock(return_value=[document]))
     monkeypatch.setattr(chat, "create_message", AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())))
     monkeypatch.setattr(chat, "create_query_run", AsyncMock(return_value=query_run))

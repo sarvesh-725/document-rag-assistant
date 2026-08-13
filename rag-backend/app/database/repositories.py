@@ -321,6 +321,20 @@ async def create_message(
     await db.execute(
         select(ChatSession.id).where(ChatSession.id == session_id).with_for_update()
     )
+    if role == "user":
+        existing_result = await db.execute(
+            select(Message).where(
+                Message.session_id == session_id,
+                Message.client_request_id == client_request_id,
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing is not None:
+            # Let the route reconnect to the original run instead of creating
+            # another QueryRun or answer.
+            setattr(existing, "_existing_client_request", True)
+            return existing
+
     stmt = select(Message.sequence_number).where(Message.session_id == session_id).order_by(
         Message.sequence_number.desc()
     ).limit(1)
@@ -356,6 +370,17 @@ async def get_session_messages(
     
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_message_by_client_request_id(
+    db: AsyncSession, session_id: uuid.UUID, client_request_id: str
+) -> Optional[Message]:
+    stmt = select(Message).where(
+        Message.session_id == session_id,
+        Message.client_request_id == client_request_id,
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def update_message_status(
@@ -434,6 +459,27 @@ def transition_query_run_status(
     }:
         query_run.completed_at = completed_at or datetime.utcnow()
     return query_run
+
+
+async def get_query_run_for_message(
+    db: AsyncSession,
+    message_id: uuid.UUID,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> Optional[QueryRun]:
+    stmt = (
+        select(QueryRun)
+        .options(selectinload(QueryRun.query_run_documents))
+        .where(
+            QueryRun.message_id == message_id,
+            QueryRun.session_id == session_id,
+            QueryRun.user_id == user_id,
+        )
+        .order_by(QueryRun.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def add_query_run_documents(

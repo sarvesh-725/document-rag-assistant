@@ -16,6 +16,8 @@ from app.database.repositories import (
     add_query_run_documents,
     create_message,
     create_query_run,
+    get_message_by_client_request_id,
+    get_query_run_for_message,
     get_session_by_id,
     transition_query_run_status,
 )
@@ -33,6 +35,40 @@ def _qdrant_model_dump(model) -> dict:
     if hasattr(model, "model_dump"):
         return model.model_dump(mode="json", exclude_none=True)
     return model.dict(exclude_none=True)
+
+
+async def _existing_request_response(
+    db: AsyncSession,
+    message,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> dict:
+    """Reconnect a retry to the state created by the original request."""
+    query_run = await get_query_run_for_message(db, message.id, session_id, user_id)
+    if query_run is None:
+        return {
+            "status": "PENDING",
+            "message_id": str(message.id),
+            "query_run_id": None,
+            "client_request_id": message.client_request_id,
+        }
+
+    version_ids = [row.version_id for row in query_run.query_run_documents]
+    response = {
+        "status": query_run.status,
+        "message_id": str(message.id),
+        "query_run_id": str(query_run.id),
+        "client_request_id": message.client_request_id,
+        "retrieval_scope": {
+            "user_id": str(user_id),
+            "version_ids": [str(version_id) for version_id in version_ids],
+        },
+    }
+    if version_ids:
+        response["qdrant_filter"] = _qdrant_model_dump(
+            owned_vector_filter(user_id, version_ids)
+        )
+    return response
 
 
 class ChatQueryRequest(BaseModel):
@@ -71,6 +107,14 @@ async def query_chat_stream(
             detail="Session not found or unauthorized.",
         )
 
+    existing_message = await get_message_by_client_request_id(
+        db, session_id, request.client_request_id
+    )
+    if existing_message is not None:
+        return await _existing_request_response(
+            db, existing_message, session_id, current_user.id
+        )
+
     try:
         resolved_documents = await resolve_selected_documents(
             db,
@@ -105,6 +149,11 @@ async def query_chat_stream(
             client_request_id=request.client_request_id,
             selected_document_snapshot=selected_document_snapshot,
         )
+        if getattr(message, "_existing_client_request", False):
+            await db.rollback()
+            return await _existing_request_response(
+                db, message, session_id, current_user.id
+            )
         query_run = await create_query_run(
             db,
             session_id,
