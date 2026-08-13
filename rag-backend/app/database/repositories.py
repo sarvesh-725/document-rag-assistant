@@ -6,9 +6,10 @@ All functions take an AsyncSession to participate in the caller's transaction.
 """
 
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
@@ -108,15 +109,38 @@ async def list_user_documents(db: AsyncSession, user_id: uuid.UUID) -> List[Docu
     return list(result.scalars().all())
 
 
-from datetime import datetime
 async def soft_delete_document(
     db: AsyncSession, document_id: uuid.UUID, user_id: uuid.UUID
 ) -> bool:
-    doc = await get_document_by_id(db, document_id, user_id)
+    """Mark an owned document as deleting, safely under a row lock.
+
+    The lock is shared with query snapshot creation.  This makes the commit
+    that creates QueryRunDocument either happen before deletion starts or see
+    DELETING and fail selection; it cannot be inserted after cleanup observes
+    an unlocked document.
+    """
+    stmt = (
+        select(Document)
+        .where(Document.id == document_id, Document.user_id == user_id)
+        .with_for_update()
+    )
+    doc = (await db.execute(stmt)).scalar_one_or_none()
     if not doc:
         return False
-    doc.deleted_at = datetime.utcnow()
-    doc.status = DocumentStatus.DELETING
+    if doc.status != DocumentStatus.DELETED.value:
+        now = datetime.utcnow()
+        if doc.deleted_at is None:
+            doc.deleted_at = now
+        doc.status = DocumentStatus.DELETING.value
+        doc.updated_at = now
+        await db.execute(
+            update(DocumentVersion)
+            .where(
+                DocumentVersion.document_id == doc.id,
+                DocumentVersion.status != VersionStatus.DELETED.value,
+            )
+            .values(status=VersionStatus.DELETING.value, updated_at=now)
+        )
     await db.flush()
     return True
 
@@ -167,7 +191,10 @@ async def set_current_version(
     db: AsyncSession, document_id: uuid.UUID, version_id: uuid.UUID
 ) -> bool:
     """Promote a processing version only when its document is still live."""
-    doc = await db.get(Document, document_id)
+    locked = await db.execute(
+        select(Document).where(Document.id == document_id).with_for_update()
+    )
+    doc = locked.scalar_one_or_none()
     version = await db.get(DocumentVersion, version_id)
     if not doc or not version or version.document_id != doc.id:
         return False
@@ -189,7 +216,6 @@ async def set_current_version(
 
 async def replace_version_parents(db: AsyncSession, version_id: uuid.UUID, parents) -> list[DocumentParent]:
     """Persist the canonical parent snapshot for a version, idempotently."""
-    from sqlalchemy import delete
     await db.execute(delete(DocumentParent).where(DocumentParent.version_id == version_id))
     rows = []
     for parent in parents:

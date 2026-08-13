@@ -24,6 +24,8 @@ from app.services.ingestion_state_machine import (
     transition_stage,
     reconcile_stale_jobs,
 )
+from app.services.document_cleanup import cleanup_deleted_document
+from app.database.repositories import create_outbox_event
 from app.database.enums import IngestionStage
 
 logger = logging.getLogger("taskiq_worker")
@@ -126,3 +128,22 @@ async def async_process_document_task(
             await mark_non_retryable_failure(db, job_uuid, exc.code, str(exc))
         except Exception as exc:
             await mark_non_retryable_failure(db, job_uuid, "INGESTION_FAILED", str(exc))
+
+
+@broker.task(task_name="tasks.cleanup_deleted_document")
+async def cleanup_deleted_document_task(document_id: str) -> bool:
+    """Retry physical deletion until query and ingestion references drain."""
+    document_uuid = uuid.UUID(document_id)
+    async with AsyncSessionLocal() as db:
+        completed = await cleanup_deleted_document(db, document_uuid)
+        if not completed:
+            # The next outbox pass retries after the active operation has had a
+            # chance to finish. No physical data is removed in this branch.
+            await create_outbox_event(
+                db,
+                "DOCUMENT_CLEANUP_REQUESTED",
+                document_uuid,
+                {"document_id": document_id},
+            )
+            await db.commit()
+        return completed

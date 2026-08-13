@@ -256,5 +256,10 @@ async def delete_version_vectors(
             collection_name=QDRANT_COLLECTION_NAME,
             points_selector=qdrant_models.FilterSelector(filter=delete_filter),
         )
-    except Exception as e:
-        logger.error(f"Error deleting version {version_id} for document {document_id}: {e}")
+    except Exception:
+        logger.exception(
+            "Error deleting version %s for document %s",
+            version_id,
+            document_id,
+        )
+        raise

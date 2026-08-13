@@ -125,6 +125,14 @@ async def delete_document(
     success = await soft_delete_document(db, doc_uuid, current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found.")
-        
+
+    # Keep cleanup durable.  The event is committed with the logical delete,
+    # so a worker outage cannot strand a DELETING document without a retry.
+    await create_outbox_event(
+        db,
+        "DOCUMENT_CLEANUP_REQUESTED",
+        doc_uuid,
+        {"document_id": str(doc_uuid), "user_id": str(current_user.id)},
+    )
     await db.commit()
     return {"status": "success", "message": "Document deleted."}

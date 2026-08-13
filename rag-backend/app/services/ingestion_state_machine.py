@@ -87,7 +87,12 @@ async def begin_attempt(db: AsyncSession, job_id: uuid.UUID) -> Optional[Ingesti
     if job.status == IngestionStatus.RETRYING.value:
         # A retry starts a fresh persisted attempt from the upload boundary.
         job.stage = IngestionStage.UPLOAD.value
-    document = await db.get(Document, job.document_id)
+    document_result = await db.execute(
+        select(Document)
+        .where(Document.id == job.document_id)
+        .with_for_update()
+    )
+    document = document_result.scalar_one_or_none()
     version = await db.get(DocumentVersion, job.version_id)
     if document is None or version is None:
         if job.status not in TERMINAL_JOB_STATUSES:
@@ -139,7 +144,12 @@ async def mark_retryable_failure(
     job.error_code = error_code
     job.error_message = error_message
     job.updated_at = _now()
-    document = await db.get(Document, job.document_id)
+    document_result = await db.execute(
+        select(Document)
+        .where(Document.id == job.document_id)
+        .with_for_update()
+    )
+    document = document_result.scalar_one_or_none()
     if (
         version is not None
         and version.storage_key
@@ -164,7 +174,12 @@ async def mark_non_retryable_failure(
     if job is None or job.status in TERMINAL_JOB_STATUSES:
         return None
     version = await db.get(DocumentVersion, job.version_id)
-    document = await db.get(Document, job.document_id)
+    document_result = await db.execute(
+        select(Document)
+        .where(Document.id == job.document_id)
+        .with_for_update()
+    )
+    document = document_result.scalar_one_or_none()
     if version is not None and version.status not in {
         VersionStatus.DELETING.value,
         VersionStatus.DELETED.value,
@@ -191,7 +206,12 @@ async def finalize_attempt(db: AsyncSession, job_id: uuid.UUID) -> bool:
     job = await get_ingestion_job(db, job_id)
     if job is None or job.status != IngestionStatus.RUNNING.value or job.stage != IngestionStage.FINALIZE.value:
         return False
-    document = await db.get(Document, job.document_id)
+    document_result = await db.execute(
+        select(Document)
+        .where(Document.id == job.document_id)
+        .with_for_update()
+    )
+    document = document_result.scalar_one_or_none()
     version = await db.get(DocumentVersion, job.version_id)
     eligible = (
         document is not None

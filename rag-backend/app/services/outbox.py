@@ -21,8 +21,13 @@ async def publish_pending_outbox_events(db: AsyncSession, redis_client=None, *, 
     )
     published = 0
     for event in result.scalars().all():
+        stream = (
+            "rag:document-cleanup"
+            if event.event_type == "DOCUMENT_CLEANUP_REQUESTED"
+            else "rag:document-ingestion"
+        )
         try:
-            await redis_client.xadd("rag:document-ingestion", {
+            await redis_client.xadd(stream, {
                 "event_id": str(event.id), "event_type": event.event_type,
                 "aggregate_id": str(event.aggregate_id),
                 "payload": json.dumps(event.payload or {}, separators=(",", ":")),

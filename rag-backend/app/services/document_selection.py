@@ -48,7 +48,12 @@ async def resolve_selected_documents(
     resolved: list[ResolvedQueryDocument] = []
 
     for document_id in document_ids:
-        document = await db.get(Document, document_id)
+        # Deletion takes the same lock before changing status.  Hold this lock
+        # until the caller commits the QueryRunDocument snapshot.
+        try:
+            document = await db.get(Document, document_id, with_for_update=True)
+        except TypeError:  # Small fake sessions used by unit tests.
+            document = await db.get(Document, document_id)
         if document is None:
             raise DocumentSelectionError(f"Document is not available: {document_id}")
         if document.user_id != authenticated_user_id:
@@ -63,7 +68,12 @@ async def resolve_selected_documents(
         if document.current_version_id is None:
             raise DocumentSelectionError(f"Document has no ready version: {document_id}")
 
-        version = await db.get(DocumentVersion, document.current_version_id)
+        try:
+            version = await db.get(
+                DocumentVersion, document.current_version_id, with_for_update=True
+            )
+        except TypeError:  # Small fake sessions used by unit tests.
+            version = await db.get(DocumentVersion, document.current_version_id)
         if (
             version is None
             or version.document_id != document.id
