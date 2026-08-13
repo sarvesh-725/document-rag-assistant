@@ -1,9 +1,8 @@
 """
 RAG Engine — Core Qdrant and embedding operations.
 
-Phase 1: Dead code removed (query_rag_system, undo_file_upload).
-Retained: init_qdrant, _get_embeddings, process_and_store_document, delete_file_from_db.
-These functions will be refactored in Phase 2 to use document_id instead of filename.
+Vector ingestion is version-scoped and idempotent. Qdrant is an index; PostgreSQL
+owns document/version state.
 """
 
 import os
@@ -131,22 +130,50 @@ async def init_qdrant():
         except Exception as idx_err:
             logger.debug(f"Index creation for 'content_hash' failed (may already exist): {idx_err}")
 
+        for field_name in ("parent_id", "chunk_id"):
+            try:
+                await client.create_payload_index(
+                    collection_name=QDRANT_COLLECTION_NAME,
+                    field_name=field_name,
+                    field_schema=(
+                        qdrant_models.PayloadSchemaType.INTEGER
+                        if field_name == "chunk_id"
+                        else qdrant_models.PayloadSchemaType.KEYWORD
+                    ),
+                )
+            except Exception as idx_err:
+                logger.debug(f"Index creation for '{field_name}' failed (may already exist): {idx_err}")
+
         _qdrant_initialized = True
     except Exception as e:
         logger.error(f"Failed to check or initialize Qdrant collection: {e}")
 
 
+def deterministic_point_id(version_id: uuid.UUID | str, chunk_id: int) -> str:
+    """Return the stable point identity for one version/chunk pair."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{version_id}:{chunk_id}"))
+
+
+def deterministic_parent_id(version_id: uuid.UUID | str, parent_index: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{version_id}:parent:{parent_index}"))
+
+
 async def process_and_store_document(
-    file_bytes: bytes, filename: str, user_id: str
+    file_bytes: bytes,
+    *,
+    user_id: str,
+    document_id: uuid.UUID | str,
+    version_id: uuid.UUID | str,
+    filename: str,
 ) -> int:
     """
     Takes raw file bytes from an upload, parses the text using unstructured,
     generates an MD5 hash of the bytes, chunks the text into Parent and Child chunks,
     generates embeddings for Children, and saves them to Qdrant Cloud.
 
-    NOTE: This function will be refactored in Phase 2 to use document_id/version_id
-    instead of filename for Qdrant payload. Retained as-is for now to avoid
-    breaking the ingestion pipeline structure.
+    Re-running this function for the same version produces the same point IDs.
+    It only upserts points belonging to the supplied version; it never purges
+    filename matches or points from another document/version.
     """
     if not file_bytes:
         raise ValueError("File content is empty.")
@@ -178,12 +205,14 @@ async def process_and_store_document(
     
     child_chunks = []
     parent_texts = []
+    parent_indices = []
     
-    for parent in parents:
+    for parent_index, parent in enumerate(parents):
         children = child_splitter.split_text(parent)
         for child in children:
             child_chunks.append(child)
             parent_texts.append(parent)
+            parent_indices.append(parent_index)
 
     if not child_chunks:
         return 0
@@ -191,39 +220,20 @@ async def process_and_store_document(
     embeddings = _get_embeddings()
     embeddings_list = embeddings.embed_documents(child_chunks)
 
-    try:
-        purge_filter = qdrant_models.Filter(
-            must=[
-                qdrant_models.FieldCondition(
-                    key="user_id", match=qdrant_models.MatchValue(value=str(user_id))
-                ),
-                qdrant_models.FieldCondition(
-                    key="filename", match=qdrant_models.MatchValue(value=filename)
-                ),
-            ],
-            must_not=[
-                qdrant_models.FieldCondition(
-                    key="content_hash", match=qdrant_models.MatchValue(value=file_hash)
-                )
-            ],
-        )
-        await client.delete(
-            collection_name=QDRANT_COLLECTION_NAME,
-            points_selector=qdrant_models.FilterSelector(filter=purge_filter),
-        )
-    except Exception as e:
-        logger.warning(f"Qdrant cleanup of outdated chunks failed or was empty: {e}")
-
     points = []
-    for i, (child, parent, vector) in enumerate(zip(child_chunks, parent_texts, embeddings_list)):
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_hash}_{i}"))
+    for i, (child, parent, parent_index, vector) in enumerate(zip(child_chunks, parent_texts, parent_indices, embeddings_list)):
+        point_id = deterministic_point_id(version_id, i)
+        parent_id = deterministic_parent_id(version_id, parent_index)
 
         payload = {
             "user_id": str(user_id),
+            "document_id": str(document_id),
+            "version_id": str(version_id),
+            "parent_id": parent_id,
+            "chunk_id": i,
             "filename": filename,
             "content_hash": file_hash,
             "source": filename,
-            "chunk_id": i,
             "text": child,
             "child_text": child,
             "parent_text": parent,
@@ -236,11 +246,12 @@ async def process_and_store_document(
     return len(child_chunks)
 
 
-async def delete_file_from_db(user_id: str, filename: str):
+async def delete_version_vectors(
+    user_id: str, document_id: uuid.UUID | str, version_id: uuid.UUID | str
+):
     """
-    Deletes all chunks associated with user_id and filename from Qdrant.
-
-    NOTE: Will be refactored in Phase 2 to use document_id instead of filename.
+    Delete only one exact document version's vectors. Filename is deliberately
+    not accepted because it is not an identity or authorization boundary.
     """
     await init_qdrant()
     try:
@@ -250,7 +261,10 @@ async def delete_file_from_db(user_id: str, filename: str):
                     key="user_id", match=qdrant_models.MatchValue(value=str(user_id))
                 ),
                 qdrant_models.FieldCondition(
-                    key="filename", match=qdrant_models.MatchValue(value=filename)
+                    key="document_id", match=qdrant_models.MatchValue(value=str(document_id))
+                ),
+                qdrant_models.FieldCondition(
+                    key="version_id", match=qdrant_models.MatchValue(value=str(version_id))
                 ),
             ]
         )
@@ -259,4 +273,4 @@ async def delete_file_from_db(user_id: str, filename: str):
             points_selector=qdrant_models.FilterSelector(filter=delete_filter),
         )
     except Exception as e:
-        logger.error(f"Error deleting file {filename} for user {user_id} from Qdrant: {e}")
+        logger.error(f"Error deleting version {version_id} for document {document_id}: {e}")

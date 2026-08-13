@@ -133,7 +133,7 @@ class DocumentVersion(Base):
     content_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     storage_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
-        String(20), default=VersionStatus.PENDING, nullable=False
+        String(20), default=VersionStatus.PROCESSING, nullable=False
     )
     parser_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     chunking_version: Mapped[Optional[str]] = mapped_column(String, nullable=True)

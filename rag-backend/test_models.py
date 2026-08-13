@@ -88,7 +88,7 @@ async def verify_crud_operations():
                 version_number=1,
                 content_hash="abc123def456",
                 storage_key="uploads/user1/doc1/v1/report.pdf",
-                status=VersionStatus.PENDING,
+                status=VersionStatus.PROCESSING,
                 parser_version="unstructured-0.23",
                 chunking_version="parent-child-v1",
                 embedding_profile="gemini-embedding-2-preview",

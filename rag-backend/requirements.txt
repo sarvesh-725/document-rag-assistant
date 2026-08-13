@@ -129,6 +129,7 @@ python-iso639==2026.4.20
 python-jose==3.5.0
 python-magic-bin==0.4.14
 python-multipart==0.0.32
+qdrant-client
 python-oxmsg==0.0.2
 PyYAML==6.0.3
 RapidFuzz==3.14.5

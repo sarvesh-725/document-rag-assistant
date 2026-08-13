@@ -1,27 +1,59 @@
 import re
 import logging
+import inspect
+from pathlib import Path
 from typing import Literal
 
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.linear_model import LogisticRegression
 
 logger = logging.getLogger("intent_classifier")
 
-# Initialize the embedding model.
-# Note: Using "onnx" backend if available can reduce RAM usage, but defaults to standard if not configured.
 import os
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 hf_token = os.getenv("HF_TOKEN")
-
-try:
-    model = SentenceTransformer("all-MiniLM-L6-v2", backend="onnx", token=hf_token)
-except Exception:
-    logger.warning("ONNX backend failed or not available for SentenceTransformer. Falling back to standard backend.")
-    model = SentenceTransformer("all-MiniLM-L6-v2", token=hf_token)
-
+_model = None
 classifier = LogisticRegression()
+
+
+class _HashingEncoder:
+    """Offline fallback with the same encode interface as SentenceTransformer."""
+
+    def __init__(self) -> None:
+        self.vectorizer = HashingVectorizer(
+            n_features=384, alternate_sign=False, norm="l2", ngram_range=(1, 2)
+        )
+
+    def encode(self, texts):
+        return self.vectorizer.transform(texts)
+
+
+def _get_model():
+    """Load the semantic encoder lazily and tolerate package-version drift."""
+    global _model
+    if _model is not None:
+        return _model
+
+    cache_root = Path(__file__).resolve().parents[1] / ".cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("TORCH_HOME", str(cache_root / "torch"))
+    os.environ.setdefault("HF_HOME", str(cache_root / "huggingface"))
+    try:
+        from sentence_transformers import SentenceTransformer
+
+        signature = inspect.signature(SentenceTransformer)
+        kwargs = {}
+        if "token" in signature.parameters and hf_token:
+            kwargs["token"] = hf_token
+        if "backend" in signature.parameters:
+            kwargs["backend"] = "onnx"
+        _model = SentenceTransformer("all-MiniLM-L6-v2", **kwargs)
+    except Exception as exc:
+        logger.warning("Semantic encoder unavailable; using local hashing fallback: %s", exc)
+        _model = _HashingEncoder()
+    return _model
 
 TRAINING_DATA = [
     # Chitchat Examples
@@ -60,7 +92,7 @@ CHITCHAT_PATTERNS = [
 def train_classifier():
     """Trains the Tier 2 classifier in memory. Takes < 1 second."""
     texts, labels = zip(*TRAINING_DATA)
-    embeddings = model.encode(texts)
+    embeddings = _get_model().encode(texts)
     classifier.fit(embeddings, labels)
     logger.info("Tier 2 Semantic Classifier trained and ready!")
 
@@ -85,7 +117,9 @@ def classify_intent(query: str) -> Literal["chitchat", "knowledge_specific", "kn
         return "chitchat"
     
     # ---- Tier 2: Semantic Embedding Check ----
-    query_embedding = model.encode([query])
+    if not hasattr(classifier, "classes_"):
+        train_classifier()
+    query_embedding = _get_model().encode([query])
     prediction = classifier.predict(query_embedding)[0]
     
     # Confidence threshold for chitchat

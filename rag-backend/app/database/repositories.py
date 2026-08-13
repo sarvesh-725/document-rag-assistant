@@ -15,7 +15,7 @@ from app.database.models import (
     User, Document, DocumentVersion, ChatSession, Message,
     IngestionJob, QueryRun, QueryRunDocument, ConversationSummary, OutboxEvent,
 )
-from app.database.enums import DocumentStatus, VersionStatus
+from app.database.enums import DocumentStatus, VersionStatus, IngestionStatus, IngestionStage
 
 
 # -----------------------------------------------------------------------------
@@ -131,7 +131,10 @@ async def create_document_version(
     chunking_version: str,
     embedding_profile: str,
     version_id: Optional[uuid.UUID] = None,
+    status: str = VersionStatus.PROCESSING.value,
 ) -> DocumentVersion:
+    if status not in {item.value for item in VersionStatus}:
+        raise ValueError(f"Invalid document version status: {status}")
     stmt = select(DocumentVersion).where(
         DocumentVersion.document_id == document_id
     ).order_by(DocumentVersion.version_number.desc())
@@ -146,7 +149,7 @@ async def create_document_version(
         version_number=next_version,
         content_hash=content_hash,
         storage_key=storage_key,
-        status=VersionStatus.PENDING,
+        status=status,
         parser_version=parser_version,
         chunking_version=chunking_version,
         embedding_profile=embedding_profile,
@@ -160,12 +163,26 @@ async def create_document_version(
 
 async def set_current_version(
     db: AsyncSession, document_id: uuid.UUID, version_id: uuid.UUID
-) -> None:
+) -> bool:
+    """Promote a processing version only when its document is still live."""
     doc = await db.get(Document, document_id)
-    if doc:
-        doc.current_version_id = version_id
-        doc.status = DocumentStatus.READY
-        await db.flush()
+    version = await db.get(DocumentVersion, version_id)
+    if not doc or not version or version.document_id != doc.id:
+        return False
+    if doc.deleted_at is not None or doc.status in {
+        DocumentStatus.DELETING.value, DocumentStatus.DELETED.value,
+    }:
+        return False
+    if version.status != VersionStatus.PROCESSING.value:
+        return False
+    doc.current_version_id = version_id
+    doc.status = DocumentStatus.READY.value
+    version.status = VersionStatus.READY.value
+    now = datetime.utcnow()
+    doc.updated_at = now
+    version.updated_at = now
+    await db.flush()
+    return True
 
 
 # -----------------------------------------------------------------------------
@@ -257,6 +274,7 @@ async def create_message(
     next_seq = 1 if latest_seq is None else latest_seq + 1
 
     message = Message(
+        id=uuid.uuid4(),
         session_id=session_id,
         sequence_number=next_seq,
         role=role,
@@ -303,6 +321,10 @@ async def create_ingestion_job(
     db: AsyncSession, document_id: uuid.UUID, version_id: uuid.UUID,
     job_id: Optional[uuid.UUID] = None, status: str = "PENDING", stage: str = "UPLOAD"
 ) -> IngestionJob:
+    if status not in {item.value for item in IngestionStatus}:
+        raise ValueError(f"Invalid ingestion job status: {status}")
+    if stage not in {item.value for item in IngestionStage}:
+        raise ValueError(f"Invalid ingestion stage: {stage}")
     job = IngestionJob(id=job_id or uuid.uuid4(), document_id=document_id, version_id=version_id, status=status, stage=stage)
     db.add(job)
     await db.flush()

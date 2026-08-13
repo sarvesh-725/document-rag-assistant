@@ -6,7 +6,7 @@ The old SessionFile-based logic has been removed entirely.
 """
 
 import logging
-from fastapi import APIRouter, Depends, UploadFile, File, Query, HTTPException, status
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 
 from app.database.connection import get_db
 from app.database.models import User, Document, DocumentVersion
@@ -39,7 +39,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".txt"}
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
     file: UploadFile = File(...),
-    session_id: Optional[str] = Query(default=None),
+    session_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db = Depends(get_db)
 ):

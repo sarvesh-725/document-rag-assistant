@@ -19,10 +19,11 @@ class DocumentStatus(str, enum.Enum):
 
 class VersionStatus(str, enum.Enum):
     """Status of a DocumentVersion."""
-    PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     READY = "READY"
     FAILED = "FAILED"
+    DELETING = "DELETING"
+    DELETED = "DELETED"
 
 
 class MessageRole(str, enum.Enum):
