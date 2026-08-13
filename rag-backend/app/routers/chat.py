@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from dataclasses import asdict
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ from app.services.document_selection import (
     DocumentSelectionError,
     resolve_selected_documents,
 )
+from app.services.intent_classifier import QueryAnalysis, classify_intent
 from app.services.vector_access import owned_vector_filter
 
 logger = logging.getLogger("chat_router")
@@ -54,17 +56,23 @@ async def _existing_request_response(
         }
 
     version_ids = [row.version_id for row in query_run.query_run_documents]
+    query_analysis = (
+        getattr(message, "selected_document_snapshot", None) or {}
+    ).get("query_analysis")
     response = {
         "status": query_run.status,
         "message_id": str(message.id),
         "query_run_id": str(query_run.id),
         "client_request_id": message.client_request_id,
+        "query_analysis": query_analysis,
         "retrieval_scope": {
             "user_id": str(user_id),
             "version_ids": [str(version_id) for version_id in version_ids],
         },
     }
-    if version_ids:
+    if version_ids and (
+        query_analysis is None or query_analysis.get("likely_needs_retrieval", True)
+    ):
         response["qdrant_filter"] = _qdrant_model_dump(
             owned_vector_filter(user_id, version_ids)
         )
@@ -115,12 +123,21 @@ async def query_chat_stream(
             db, existing_message, session_id, current_user.id
         )
 
-    try:
-        resolved_documents = await resolve_selected_documents(
-            db,
-            authenticated_user_id=current_user.id,
-            selected_document_ids=request.selected_document_ids,
+    query_analysis: QueryAnalysis = classify_intent(request.question)
+    if not request.selected_document_ids and not query_analysis.is_obvious_chitchat:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please select a document first.",
         )
+
+    resolved_documents = []
+    try:
+        if request.selected_document_ids:
+            resolved_documents = await resolve_selected_documents(
+                db,
+                authenticated_user_id=current_user.id,
+                selected_document_ids=request.selected_document_ids,
+            )
     except DocumentSelectionError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -128,8 +145,13 @@ async def query_chat_stream(
         ) from exc
 
     resolved_version_ids = [document.version_id for document in resolved_documents]
-    vector_filter = owned_vector_filter(current_user.id, resolved_version_ids)
+    vector_filter = (
+        owned_vector_filter(current_user.id, resolved_version_ids)
+        if query_analysis.likely_needs_retrieval and resolved_version_ids
+        else None
+    )
     selected_document_snapshot = {
+        "query_analysis": asdict(query_analysis),
         "documents": [
             {
                 "document_id": str(document.document_id),
@@ -193,7 +215,7 @@ async def query_chat_stream(
                 await db.rollback()
         raise
 
-    return {
+    response = {
         "status": getattr(query_run, "status", QueryRunStatus.COMPLETED.value),
         "message_id": str(message.id),
         "query_run_id": str(query_run.id),
@@ -201,5 +223,8 @@ async def query_chat_stream(
             "user_id": str(current_user.id),
             "version_ids": [str(version_id) for version_id in resolved_version_ids],
         },
-        "qdrant_filter": _qdrant_model_dump(vector_filter),
+        "query_analysis": asdict(query_analysis),
     }
+    if vector_filter is not None:
+        response["qdrant_filter"] = _qdrant_model_dump(vector_filter)
+    return response
