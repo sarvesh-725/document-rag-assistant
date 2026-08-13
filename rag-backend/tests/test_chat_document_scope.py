@@ -28,6 +28,11 @@ async def test_query_creates_query_run_document_rows_from_resolved_versions(monk
     monkeypatch.setattr(chat, "create_query_run", AsyncMock(return_value=SimpleNamespace(id=query_run_id)))
     add_documents = AsyncMock(return_value=[])
     monkeypatch.setattr(chat, "add_query_run_documents", add_documents)
+    monkeypatch.setattr(
+        chat,
+        "hybrid_retriever",
+        SimpleNamespace(retrieve=AsyncMock(return_value=SimpleNamespace(context=[]))),
+    )
     db = AsyncMock()
 
     response = await chat.query_chat_stream(

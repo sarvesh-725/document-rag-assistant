@@ -37,6 +37,11 @@ def configure_query(monkeypatch, current_user, session_id, query_run):
     monkeypatch.setattr(chat, "create_message", AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())))
     monkeypatch.setattr(chat, "create_query_run", AsyncMock(return_value=query_run))
     monkeypatch.setattr(chat, "add_query_run_documents", AsyncMock())
+    monkeypatch.setattr(
+        chat,
+        "hybrid_retriever",
+        SimpleNamespace(retrieve=AsyncMock(return_value=SimpleNamespace(context=[]))),
+    )
     return document
 
 

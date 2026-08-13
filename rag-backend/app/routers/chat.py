@@ -27,10 +27,12 @@ from app.services.document_selection import (
     resolve_selected_documents,
 )
 from app.services.intent_classifier import QueryAnalysis, classify_intent
+from app.services.retrieval import HybridRetriever, serialize_context
 from app.services.vector_access import owned_vector_filter
 
 logger = logging.getLogger("chat_router")
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+hybrid_retriever = HybridRetriever()
 
 
 def _qdrant_model_dump(model) -> dict:
@@ -162,6 +164,7 @@ async def query_chat_stream(
     }
 
     query_run = None
+    retrieval_result = None
     try:
         message = await create_message(
             db,
@@ -190,6 +193,14 @@ async def query_chat_stream(
         # Make the active reference visible before any retrieval/generation
         # work, including to document deletion cleanup.
         await db.commit()
+
+        if vector_filter is not None:
+            retrieval_result = await hybrid_retriever.retrieve(
+                query_analysis.normalized_query,
+                current_user.id,
+                resolved_version_ids,
+                db,
+            )
 
         if http_request is not None and await http_request.is_disconnected():
             transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
@@ -224,6 +235,12 @@ async def query_chat_stream(
             "version_ids": [str(version_id) for version_id in resolved_version_ids],
         },
         "query_analysis": asdict(query_analysis),
+        "retrieval": {
+            "required": query_analysis.likely_needs_retrieval,
+            "context": serialize_context(retrieval_result)
+            if retrieval_result is not None
+            else [],
+        },
     }
     if vector_filter is not None:
         response["qdrant_filter"] = _qdrant_model_dump(vector_filter)
