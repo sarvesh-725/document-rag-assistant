@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Paperclip, Send, Loader2, Search, UploadCloud, CheckCircle } from 'lucide-react';
 import { Document } from '../types';
+import { publishCrossTabEvent } from '../lib/crossTabSync';
 
 interface ChatInputDockProps {
   token: string;
@@ -98,6 +99,7 @@ export default function ChatInputDock({
 
       setShowOverlay(false);
       await fetchDocuments();
+      publishCrossTabEvent({ type: 'documents_changed' });
       if (data.document_id && !selectedDocumentIds.includes(data.document_id)) {
         setSelectedDocumentIds(prev => [...prev, data.document_id]);
       }
@@ -150,6 +152,7 @@ export default function ChatInputDock({
 
       setShowOverlay(false);
       await fetchDocuments();
+      publishCrossTabEvent({ type: 'documents_changed' });
       if (data.document_id && !selectedDocumentIds.includes(data.document_id)) {
         setSelectedDocumentIds(prev => [...prev, data.document_id]);
       }

@@ -5,6 +5,10 @@ import Sidebar from './components/Sidebar';
 import SelectedDocumentsBar from './components/SelectedDocumentsBar';
 import ChatInputDock from './components/ChatInputDock';
 import { Document } from './types';
+import {
+  publishCrossTabEvent,
+  subscribeToCrossTabEvents,
+} from './lib/crossTabSync';
 import { Bot, User as UserIcon, Loader2, KeyRound, AlertTriangle } from 'lucide-react';
 
 interface Message {
@@ -30,6 +34,7 @@ export default function Home() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const documentsRef = useRef<Document[]>([]);
 
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
@@ -53,8 +58,18 @@ export default function Home() {
         return;
       }
       if (res.ok) {
-        const data = await res.json();
+        const data: Document[] = await res.json();
+        const statusChanged = data.some((document) => {
+          const previous = documentsRef.current.find(
+            (item) => item.document_id === document.document_id
+          );
+          return previous && previous.status !== document.status;
+        });
+        documentsRef.current = data;
         setDocuments(data);
+        if (statusChanged) {
+          publishCrossTabEvent({ type: 'documents_changed' });
+        }
       }
     } catch (err) {
       console.error('Failed to fetch documents:', err);
@@ -91,40 +106,61 @@ export default function Home() {
     );
   }, [documents]);
 
-  useEffect(() => {
-    const loadSessionHistory = async () => {
-      if (!activeSessionId || !token) return;
-      try {
-        const historyRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/sessions/${activeSessionId}/history`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (historyRes.status === 401) {
-          handleLogout();
-          return;
-        }
-        if (historyRes.ok) {
-          const data = await historyRes.json();
-          const mapped = data.items.map((msg: any) => {
-            const role = msg.role;
-            const text = msg.content || '';
-            const bound_document_ids = (msg.selected_document_snapshot?.documents || [])
-              .map((document: { document_id: string }) => document.document_id);
-            return { role, text, bound_document_ids };
-          });
-          setMessages(mapped);
-        } else {
-          setMessages([]);
-        }
-      } catch (err) {
-        console.error('Error fetching session history:', err);
-        setMessages([]);
+  const fetchSessionHistory = async (sessionId: string) => {
+    if (!token) return;
+    try {
+      const historyRes = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/sessions/${sessionId}/history`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (historyRes.status === 401) {
+        handleLogout();
+        return;
       }
-    };
+      if (!historyRes.ok) {
+        setMessages([]);
+        return;
+      }
+      const data = await historyRes.json();
+      const mapped = data.items.map((msg: any) => {
+        const bound_document_ids = (msg.selected_document_snapshot?.documents || [])
+          .map((document: { document_id: string }) => document.document_id);
+        return {
+          role: msg.role,
+          text: msg.content || '',
+          bound_document_ids,
+        };
+      });
+      setMessages(mapped);
+    } catch (err) {
+      console.error('Error fetching session history:', err);
+      setMessages([]);
+    }
+  };
 
-    loadSessionHistory();
+  useEffect(() => {
+    if (activeSessionId) {
+      fetchSessionHistory(activeSessionId);
+    }
   }, [activeSessionId, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    return subscribeToCrossTabEvents((event) => {
+      if (
+        event.type === 'documents_changed' ||
+        event.type === 'document_status_changed'
+      ) {
+        void fetchDocuments();
+      }
+      if (
+        event.type === 'session_changed' &&
+        event.session_id === activeSessionId
+      ) {
+        void fetchSessionHistory(event.session_id);
+      }
+    });
+  }, [token, activeSessionId]);
 
 
   const handleDeleteDocument = async (document_id: string) => {
@@ -156,6 +192,7 @@ export default function Home() {
         setSelectedDocumentIds(previousSelected);
       } else {
         await fetchDocuments();
+        publishCrossTabEvent({ type: 'documents_changed' });
       }
     } catch (err) {
       console.error('Failed to delete file:', err);
@@ -315,7 +352,9 @@ export default function Home() {
         }
       }
       await fetchDocuments();
+      publishCrossTabEvent({ type: 'session_changed', session_id: activeSessionId });
     } catch (err: any) {
+      publishCrossTabEvent({ type: 'session_changed', session_id: activeSessionId });
       setMessages((prev) => {
         const updated = [...prev];
         const lastIdx = updated.length - 1;

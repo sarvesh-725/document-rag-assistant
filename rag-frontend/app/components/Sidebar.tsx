@@ -2,6 +2,10 @@
 
 import React, { useEffect, useState } from 'react';
 import { Plus, MessageSquare, LogOut, Trash2 } from 'lucide-react';
+import {
+  publishCrossTabEvent,
+  subscribeToCrossTabEvents,
+} from '../lib/crossTabSync';
 
 interface SidebarProps {
   token: string;
@@ -34,6 +38,9 @@ export default function Sidebar({ token, activeSessionId, setActiveSessionId, on
       if (res.ok) {
         const data = await res.json();
         setSessions(data);
+        if (activeSessionId && !data.some((session: SessionSummary) => session.id === activeSessionId)) {
+          setActiveSessionId(null);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch sessions:', err);
@@ -45,6 +52,15 @@ export default function Sidebar({ token, activeSessionId, setActiveSessionId, on
       fetchSessions();
     }
   }, [token, refreshTrigger]);
+
+  useEffect(() => {
+    if (!token) return;
+    return subscribeToCrossTabEvents((event) => {
+      if (event.type === 'sessions_changed') {
+        void fetchSessions();
+      }
+    });
+  }, [token, activeSessionId]);
 
   const handleCreateSession = async () => {
     setLoading(true);
@@ -65,6 +81,7 @@ export default function Sidebar({ token, activeSessionId, setActiveSessionId, on
         const session = await res.json();
         await fetchSessions();
         setActiveSessionId(session.session_id);
+        publishCrossTabEvent({ type: 'sessions_changed' });
       }
     } catch (err) {
       console.error('Failed to create session:', err);
@@ -101,6 +118,8 @@ export default function Sidebar({ token, activeSessionId, setActiveSessionId, on
         if (activeSessionId === id) {
           setActiveSessionId(id);
         }
+      } else {
+        publishCrossTabEvent({ type: 'sessions_changed' });
       }
     } catch (err) {
       console.error('Failed to delete session:', err);
