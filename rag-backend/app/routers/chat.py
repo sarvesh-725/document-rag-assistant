@@ -60,32 +60,34 @@ def _qdrant_model_dump(model) -> dict:
 
 async def _existing_request_response(
     db: AsyncSession,
-    message,
+    message_id: uuid.UUID,
+    client_request_id: str,
+    selected_document_snapshot: dict | None,
     session_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> dict:
     """Reconnect a retry to the state created by the original request."""
-    query_run = await get_query_run_for_message(db, message.id, session_id, user_id)
+    query_run = await get_query_run_for_message(db, message_id, session_id, user_id)
     if query_run is None:
         return {
             "status": "PENDING",
-            "message_id": str(message.id),
+            "message_id": str(message_id),
             "query_run_id": None,
-            "client_request_id": message.client_request_id,
+            "client_request_id": client_request_id,
         }
 
     assistant = None
     if isinstance(db, AsyncSession):
-        assistant = await get_assistant_message_for_query(db, session_id, message.id)
+        assistant = await get_assistant_message_for_query(db, session_id, message_id)
     version_ids = [row.version_id for row in query_run.query_run_documents]
     query_analysis = (
-        getattr(message, "selected_document_snapshot", None) or {}
+        selected_document_snapshot or {}
     ).get("query_analysis")
     response = {
         "status": query_run.status,
-        "message_id": str(message.id),
+        "message_id": str(message_id),
         "query_run_id": str(query_run.id),
-        "client_request_id": message.client_request_id,
+        "client_request_id": client_request_id,
         "query_analysis": query_analysis,
         "assistant_message_id": str(assistant.id) if assistant else None,
         "answer": assistant.content if assistant else None,
@@ -283,8 +285,16 @@ async def query_chat_stream(
         db, session_id, request.client_request_id
     )
     if existing_message is not None:
+        existing_message_id = existing_message.id
+        existing_client_request_id = existing_message.client_request_id
+        existing_snapshot = getattr(existing_message, "selected_document_snapshot", None)
         existing_state = await _existing_request_response(
-            db, existing_message, session_id, user_id
+            db,
+            existing_message_id,
+            existing_client_request_id,
+            existing_snapshot,
+            session_id,
+            user_id,
         )
         if http_request is not None:
             return StreamingResponse(
@@ -308,9 +318,17 @@ async def query_chat_stream(
         selected_document_snapshot=None,
     )
     if getattr(message, "_existing_client_request", False):
+        existing_message_id = message.id
+        existing_client_request_id = message.client_request_id
+        existing_snapshot = message.selected_document_snapshot
         await db.rollback()
         existing_state = await _existing_request_response(
-            db, message, session_id, user_id
+            db,
+            existing_message_id,
+            existing_client_request_id,
+            existing_snapshot,
+            session_id,
+            user_id,
         )
         if http_request is not None:
             return StreamingResponse(

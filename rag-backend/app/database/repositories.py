@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -360,8 +361,24 @@ async def create_message(
         status=status,
         parent_message_id=parent_message_id,
     )
-    db.add(message)
-    await db.flush()
+    try:
+        # Keep a unique-constraint race inside a savepoint. The outer session
+        # remains usable so the loser can fetch the winner and return it.
+        async with db.begin_nested():
+            db.add(message)
+            await db.flush()
+    except IntegrityError:
+        existing_result = await db.execute(
+            select(Message).where(
+                Message.session_id == session_id,
+                Message.client_request_id == client_request_id,
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing is None:
+            raise
+        setattr(existing, "_existing_client_request", True)
+        return existing
     return message
 
 
