@@ -25,7 +25,9 @@ export function useDocuments(token: string | null, onUnauthorized: () => void) {
   useBroadcastSync((event) => {
     if (event.type === 'documents_changed' || event.type === 'document_status_changed') void fetchDocuments();
   });
-  useEffect(() => { void fetchDocuments(); }, [fetchDocuments]);
+  useEffect(() => {
+    void fetchDocuments();
+  }, [fetchDocuments]);
   useEffect(() => {
     if (!documents.some((item) => item.status === 'PROCESSING')) return;
     const timer = window.setInterval(() => void fetchDocuments(), 3000);
@@ -46,11 +48,21 @@ export function useDocuments(token: string | null, onUnauthorized: () => void) {
 
   const deleteDocument = useCallback(async (documentId: string) => {
     if (!token) return;
-    const response = await apiFetch(`/api/v1/documents/${documentId}`, token, { method: 'DELETE' });
-    if (response.status === 401) { onUnauthorized(); return; }
-    if (!response.ok) throw await apiError(response, 'Delete failed');
-    await fetchDocuments();
-    publishCrossTabEvent({ type: 'documents_changed' });
+    const previous = previousRef.current;
+    const optimistic = previous.filter((document) => document.document_id !== documentId);
+    previousRef.current = optimistic;
+    setDocuments(optimistic);
+    try {
+      const response = await apiFetch(`/api/v1/documents/${documentId}`, token, { method: 'DELETE' });
+      if (response.status === 401) { onUnauthorized(); throw new Error('Unauthorized'); }
+      if (!response.ok) throw await apiError(response, 'Delete failed');
+      await fetchDocuments();
+      publishCrossTabEvent({ type: 'documents_changed' });
+    } catch (error) {
+      previousRef.current = previous;
+      setDocuments(previous);
+      throw error;
+    }
   }, [token, onUnauthorized, fetchDocuments]);
 
   const retryDocument = useCallback(async (documentId: string) => {

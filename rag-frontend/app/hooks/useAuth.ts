@@ -8,7 +8,9 @@ export function useAuth() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
-  useEffect(() => setToken(localStorage.getItem('token')), []);
+  useEffect(() => {
+    setToken(localStorage.getItem('token'));
+  }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem('token');

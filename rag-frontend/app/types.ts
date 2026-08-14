@@ -20,6 +20,10 @@ export type Source = {
 };
 
 export type ChatMessage = {
+  message_id?: string;
+  sequence_number?: number;
+  client_request_id?: string;
+  status?: string;
   role: 'user' | 'assistant';
   text: string;
   bound_document_ids?: string[];

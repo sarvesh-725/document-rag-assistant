@@ -56,6 +56,9 @@ async def test_zero_retrieval_evidence_creates_deterministic_completed_assistant
     assert response["grounded"] is False
     assert response["answer"] == chat.NO_GROUNDING_RESPONSE
     assert response["retrieval"]["context"] == []
+    assert chat.create_message.await_count == 2
+    assert chat.create_message.await_args_list[1].kwargs["status"] == "STREAMING"
+    assert chat.create_message.await_args_list[1].kwargs["parent_message_id"] == message.id
     update_status.assert_awaited_once_with(
         ANY,
         assistant.id,

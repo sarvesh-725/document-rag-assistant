@@ -13,6 +13,11 @@ export function useBroadcastSync(
   const listenerRef = useRef(onEvent);
   listenerRef.current = onEvent;
 
-  useEffect(() => subscribeToCrossTabEvents((event) => listenerRef.current(event)), []);
+  useEffect(() => {
+    const unsubscribe = subscribeToCrossTabEvents((event) => listenerRef.current(event));
+    return () => {
+      unsubscribe();
+    };
+  }, []);
   return publishCrossTabEvent;
 }

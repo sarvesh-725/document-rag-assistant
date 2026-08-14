@@ -18,7 +18,9 @@ export function useSessions(token: string | null, onUnauthorized: () => void) {
   useBroadcastSync((event) => {
     if (event.type === 'sessions_changed') void fetchSessions();
   });
-  useEffect(() => { void fetchSessions(); }, [fetchSessions]);
+  useEffect(() => {
+    void fetchSessions();
+  }, [fetchSessions]);
 
   const createSession = useCallback(async () => {
     if (!token) return null;
@@ -39,13 +41,20 @@ export function useSessions(token: string | null, onUnauthorized: () => void) {
 
   const deleteSession = useCallback(async (id: string) => {
     if (!token) return false;
-    const response = await apiFetch(`/api/v1/sessions/${id}`, token, { method: 'DELETE' });
-    if (response.status === 401) { onUnauthorized(); return false; }
-    if (!response.ok) throw await apiError(response, 'Failed to delete session');
-    await fetchSessions();
-    publishCrossTabEvent({ type: 'sessions_changed' });
-    return true;
-  }, [token, onUnauthorized, fetchSessions]);
+    const previous = sessions;
+    setSessions(previous.filter((session) => session.id !== id));
+    try {
+      const response = await apiFetch(`/api/v1/sessions/${id}`, token, { method: 'DELETE' });
+      if (response.status === 401) { onUnauthorized(); throw new Error('Unauthorized'); }
+      if (!response.ok) throw await apiError(response, 'Failed to delete session');
+      await fetchSessions();
+      publishCrossTabEvent({ type: 'sessions_changed' });
+      return true;
+    } catch (error) {
+      setSessions(previous);
+      throw error;
+    }
+  }, [token, onUnauthorized, fetchSessions, sessions]);
 
   return { sessions, loading, fetchSessions, createSession, deleteSession };
 }

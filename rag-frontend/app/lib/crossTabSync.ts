@@ -4,7 +4,8 @@ export type CrossTabEvent =
   | { type: 'documents_changed' }
   | { type: 'sessions_changed' }
   | { type: 'session_changed'; session_id: string }
-  | { type: 'document_status_changed' };
+  | { type: 'document_status_changed' }
+  | { type: 'selection_changed'; session_id: string };
 
 let channel: BroadcastChannel | null = null;
 
