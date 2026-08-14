@@ -345,6 +345,17 @@ async def query_chat_stream(
             query_run.id,
             [(document.document_id, document.version_id) for document in resolved_documents],
         )
+        # Establish the recoverable user/assistant pair before retrieval or
+        # generation begins. The same assistant row is updated by the stream.
+        assistant_message = await create_message(
+            db,
+            session_id,
+            MessageRole.ASSISTANT.value,
+            content="",
+            sources={"documents": []},
+            status=MessageStatus.STREAMING.value,
+            parent_message_id=message.id,
+        )
         # Make the active reference visible before any retrieval/generation
         # work, including to document deletion cleanup.
         await db.commit()
@@ -374,19 +385,15 @@ async def query_chat_stream(
         )
 
         if http_request is not None and await http_request.is_disconnected():
+            await update_message_status(
+                db, assistant_message.id, MessageStatus.CANCELLED.value, content=""
+            )
             transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
             await db.commit()
             return {"status": QueryRunStatus.CANCELLED.value, "query_run_id": str(query_run.id)}
 
         if http_request is not None:
-            assistant_message = await create_message(
-                db,
-                session_id,
-                MessageRole.ASSISTANT.value,
-                content="",
-                sources={"documents": context_package.citations},
-                status=MessageStatus.STREAMING.value,
-            )
+            assistant_message.sources = {"documents": context_package.citations}
             await db.commit()
             return StreamingResponse(
                 _stream_query_response(
@@ -403,19 +410,15 @@ async def query_chat_stream(
             )
 
         if retrieval_result is not None and not has_sufficient_evidence(retrieval_result):
-            assistant_message = await create_message(
-                db,
-                session_id,
-                MessageRole.ASSISTANT.value,
-                content=NO_GROUNDING_RESPONSE,
-                sources={"documents": []},
-                status=MessageStatus.COMPLETED.value,
-            )
             await update_message_status(
                 db,
                 assistant_message.id,
                 MessageStatus.COMPLETED.value,
                 content=NO_GROUNDING_RESPONSE,
+            )
+        elif assistant_message is not None:
+            await update_message_status(
+                db, assistant_message.id, MessageStatus.COMPLETED.value, content=""
             )
 
         transition_query_run_status(query_run, QueryRunStatus.COMPLETED.value)
@@ -423,6 +426,11 @@ async def query_chat_stream(
     except asyncio.CancelledError:
         if query_run is not None:
             try:
+                if assistant_message is not None:
+                    await update_message_status(
+                        db, assistant_message.id, MessageStatus.CANCELLED.value,
+                        content=getattr(assistant_message, "content", "") or "",
+                    )
                 transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
                 await db.commit()
             except Exception:
@@ -431,6 +439,11 @@ async def query_chat_stream(
     except Exception:
         if query_run is not None:
             try:
+                if assistant_message is not None:
+                    await update_message_status(
+                        db, assistant_message.id, MessageStatus.FAILED.value,
+                        content=getattr(assistant_message, "content", "") or "",
+                    )
                 transition_query_run_status(query_run, QueryRunStatus.FAILED.value)
                 await db.commit()
             except Exception:

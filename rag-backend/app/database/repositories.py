@@ -302,6 +302,7 @@ async def create_message(
     selected_document_snapshot: Optional[dict] = None,
     sources: Optional[dict] = None,
     status: str = MessageStatus.PENDING.value,
+    parent_message_id: Optional[uuid.UUID] = None,
 ) -> Message:
     """Append a row message with a transaction-safe, server-assigned sequence.
 
@@ -321,6 +322,8 @@ async def create_message(
         raise ValueError("Only user messages may store a selected document snapshot")
     if role != "assistant" and sources is not None:
         raise ValueError("Only assistant messages may store sources")
+    if role != "assistant" and parent_message_id is not None:
+        raise ValueError("Only assistant messages may have a parent user message")
 
     await db.execute(
         select(ChatSession.id).where(ChatSession.id == session_id).with_for_update()
@@ -355,6 +358,7 @@ async def create_message(
         selected_document_snapshot=selected_document_snapshot,
         sources=sources,
         status=status,
+        parent_message_id=parent_message_id,
     )
     db.add(message)
     await db.flush()
@@ -427,15 +431,12 @@ async def get_assistant_message_for_query(
     db: AsyncSession, session_id: uuid.UUID, user_message_id: uuid.UUID
 ) -> Optional[Message]:
     """Return the first assistant row after a query's user message."""
-    user_message = await db.get(Message, user_message_id)
-    if user_message is None:
-        return None
     stmt = (
         select(Message)
         .where(
             Message.session_id == session_id,
             Message.role == "assistant",
-            Message.sequence_number > user_message.sequence_number,
+            Message.parent_message_id == user_message_id,
         )
         .order_by(Message.sequence_number.asc())
         .limit(1)

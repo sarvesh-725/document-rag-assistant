@@ -257,10 +257,12 @@ async def get_session_history(
         "items": [
         {
             "id": str(m.id),
+            "parent_message_id": str(m.parent_message_id) if m.parent_message_id else None,
             "sequence_number": m.sequence_number,
             "role": m.role,
             "content": m.content,
             "status": m.status,
+            "client_request_id": m.client_request_id,
             "selected_document_snapshot": m.selected_document_snapshot,
             "sources": m.sources,
             "created_at": m.created_at.isoformat() if m.created_at else None,

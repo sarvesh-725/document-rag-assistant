@@ -249,6 +249,10 @@ class Message(Base):
     client_request_id: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, index=True
     )
+    parent_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
     selected_document_snapshot: Mapped[Optional[dict]] = mapped_column(
         JSONB, nullable=True
     )
