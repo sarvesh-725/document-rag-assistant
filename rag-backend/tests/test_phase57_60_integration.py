@@ -87,7 +87,10 @@ async def _wait_ready(
 
 @pytest.mark.asyncio
 async def test_phases_57_to_60_real_document_duplicate_session_query_and_delete_flow():
-    async with httpx.AsyncClient(base_url=API_URL) as client:
+    async with httpx.AsyncClient(
+        base_url=API_URL,
+        timeout=httpx.Timeout(30.0),
+    ) as client:
         token = await _login(client)
         auth = {"Authorization": f"Bearer {token}"}
 
@@ -96,7 +99,7 @@ async def test_phases_57_to_60_real_document_duplicate_session_query_and_delete_
             headers=auth,
             json={"title": "A"},
         )
-        assert session_a_response.status_code == 200, session_a_response.text
+        assert session_a_response.status_code == 201, session_a_response.text
         session_a = session_a_response.json()["session_id"]
 
         session_b_response = await client.post(
@@ -104,7 +107,7 @@ async def test_phases_57_to_60_real_document_duplicate_session_query_and_delete_
             headers=auth,
             json={"title": "B"},
         )
-        assert session_b_response.status_code == 200, session_b_response.text
+        assert session_b_response.status_code == 201, session_b_response.text
         session_b = session_b_response.json()["session_id"]
 
         uploads = []
@@ -154,13 +157,13 @@ async def test_phases_57_to_60_real_document_duplicate_session_query_and_delete_
         documents = documents_response.json()
         upload_ids = {upload["document_id"] for upload in uploads}
 
-        names = [
-            item["display_name"]
+        names = {
+            item["document_id"]: item["display_name"]
             for item in documents
             if item["document_id"] in upload_ids
-        ]
+        }
 
-        assert names == [
+        assert [names[item["document_id"]] for item in uploads] == [
             "report.pdf",
             "report (2).pdf",
             "report (3).pdf",

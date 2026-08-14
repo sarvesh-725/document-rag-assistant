@@ -72,3 +72,29 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+async def get_current_user_id(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> uuid.UUID:
+    """Authenticate and return only the scalar UUID needed by hot paths."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        settings = get_settings()
+        payload = jwt.decode(token, settings.require_secret_key(), algorithms=[settings.algorithm])
+        username = payload.get("sub")
+        user_id = uuid.UUID(payload.get("user_id"))
+    except (JWTError, ValueError, TypeError):
+        raise credentials_exception
+
+    result = await db.execute(
+        select(User.id).where(User.username == username, User.id == user_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise credentials_exception
+    return user_id

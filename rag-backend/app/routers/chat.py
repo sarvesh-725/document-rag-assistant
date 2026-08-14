@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.connection import get_db
 from app.config import get_settings
 from app.database.models import User
-from app.auth.security import get_current_user
+from app.auth.security import get_current_user, get_current_user_id
 from app.database.enums import MessageRole, MessageStatus, QueryRunStatus
 from app.database.repositories import (
     add_query_run_documents,
@@ -250,6 +250,7 @@ async def query_chat_stream(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     http_request: Request = None,
+    authenticated_user_id: uuid.UUID = Depends(get_current_user_id),
 ):
     """
     Resolve selected documents through PostgreSQL before vector retrieval.
@@ -258,6 +259,11 @@ async def query_chat_stream(
     current endpoint's query work is the durable scope setup; later retrieval
     stages use the same run and terminal transition helpers.
     """
+    user_id = (
+        authenticated_user_id
+        if isinstance(authenticated_user_id, uuid.UUID)
+        else current_user.id
+    )
     try:
         session_id = uuid.UUID(request.session_id)
     except ValueError as exc:
@@ -266,7 +272,7 @@ async def query_chat_stream(
             detail="Invalid session_id.",
         ) from exc
 
-    session = await get_session_by_id(db, session_id, current_user.id)
+    session = await get_session_by_id(db, session_id, user_id)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -278,7 +284,7 @@ async def query_chat_stream(
     )
     if existing_message is not None:
         existing_state = await _existing_request_response(
-            db, existing_message, session_id, current_user.id
+            db, existing_message, session_id, user_id
         )
         if http_request is not None:
             return StreamingResponse(
@@ -304,7 +310,7 @@ async def query_chat_stream(
     if getattr(message, "_existing_client_request", False):
         await db.rollback()
         existing_state = await _existing_request_response(
-            db, message, session_id, current_user.id
+            db, message, session_id, user_id
         )
         if http_request is not None:
             return StreamingResponse(
@@ -325,7 +331,7 @@ async def query_chat_stream(
         if request.selected_document_ids:
             resolved_documents = await resolve_selected_documents(
                 db,
-                authenticated_user_id=current_user.id,
+                authenticated_user_id=user_id,
                 selected_document_ids=request.selected_document_ids,
             )
     except DocumentSelectionError as exc:
@@ -336,7 +342,7 @@ async def query_chat_stream(
 
     resolved_version_ids = [document.version_id for document in resolved_documents]
     vector_filter = (
-        owned_vector_filter(current_user.id, resolved_version_ids)
+        owned_vector_filter(user_id, resolved_version_ids)
         if query_analysis.likely_needs_retrieval and resolved_version_ids
         else None
     )
@@ -359,7 +365,7 @@ async def query_chat_stream(
         query_run = await create_query_run(
             db,
             session_id,
-            current_user.id,
+            user_id,
             message_id=message.id,
         )
         await add_query_run_documents(
@@ -385,7 +391,7 @@ async def query_chat_stream(
         if vector_filter is not None:
             retrieval_result = await hybrid_retriever.retrieve(
                 query_analysis.normalized_query,
-                current_user.id,
+                user_id,
                 resolved_version_ids,
                 db,
             )
@@ -477,7 +483,7 @@ async def query_chat_stream(
         "message_id": str(message.id),
         "query_run_id": str(query_run.id),
         "retrieval_scope": {
-            "user_id": str(current_user.id),
+            "user_id": str(user_id),
             "version_ids": [str(version_id) for version_id in resolved_version_ids],
         },
         "query_analysis": asdict(query_analysis),
