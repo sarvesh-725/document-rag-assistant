@@ -27,12 +27,20 @@ from app.services.document_cleanup import cleanup_deleted_document
 from app.services.query_run_lifecycle import reconcile_stale_query_runs
 from app.database.repositories import create_outbox_event
 from app.database.enums import IngestionStage
+from app.config import get_settings
 
 logger = logging.getLogger("taskiq_worker")
 logging.basicConfig(level=logging.INFO)
 
 STORAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "UPLOADS"))
 storage_service = LocalStorageService(STORAGE_ROOT)
+
+
+def _is_transient_external_failure(error: Exception) -> bool:
+    text = f"{type(error).__module__}.{type(error).__name__} {error}".lower()
+    return any(marker in text for marker in (
+        "timeout", "connection", "responsehandling", "qdrant", "unstructured",
+    ))
 
 
 @broker.task(task_name="tasks.reconcile_ingestion_jobs")
@@ -101,6 +109,17 @@ async def async_process_document_task(
             await transition_stage(db, job_uuid, IngestionStage.PARSE)
             from app.services.chunking import parse_parent_child_chunks, PARSER_VERSION, CHUNKING_VERSION
             parsed = parse_parent_child_chunks(content, document.original_filename, version_uuid, document_uuid)
+            settings = get_settings()
+            pages = {
+                page
+                for parent in parsed.parents
+                for page in (parent.page_start, parent.page_end)
+                if page is not None
+            }
+            if len(pages) > settings.max_pages_per_file:
+                raise NonRetryableIngestionError("File exceeds page limit", "MAX_PAGES_PER_FILE")
+            if len(parsed.children) > settings.max_child_chunks:
+                raise NonRetryableIngestionError("File produces too many child chunks", "MAX_CHILD_CHUNKS")
             await transition_stage(db, job_uuid, IngestionStage.CHUNK)
             from app.database.repositories import replace_version_parents
             await replace_version_parents(db, version_uuid, parsed.parents)
@@ -127,7 +146,10 @@ async def async_process_document_task(
         except NonRetryableIngestionError as exc:
             await mark_non_retryable_failure(db, job_uuid, exc.code, str(exc))
         except Exception as exc:
-            await mark_non_retryable_failure(db, job_uuid, "INGESTION_FAILED", str(exc))
+            if _is_transient_external_failure(exc):
+                await mark_retryable_failure(db, job_uuid, "TRANSIENT_INGESTION_ERROR", str(exc))
+            else:
+                await mark_non_retryable_failure(db, job_uuid, "INGESTION_FAILED", str(exc))
 
 
 @broker.task(task_name="tasks.cleanup_deleted_document")

@@ -47,16 +47,21 @@ class RetrievalConfig:
     bm25_top_k: int = 30
     rrf_k: int = 60
     final_candidate_count: int = 8
+    max_rerank_k: int = 100
     rerank_threshold: Optional[float] = None
     bm25_scan_limit: int = 10000
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
+        max_dense = _positive_int("MAX_DENSE_K", 100)
+        max_bm25 = _positive_int("MAX_BM25_K", 100)
+        max_rerank = _positive_int("MAX_RERANK_K", 100)
         return cls(
-            dense_top_k=_positive_int("DENSE_TOP_K", 30),
-            bm25_top_k=_positive_int("BM25_TOP_K", 30),
+            dense_top_k=min(_positive_int("DENSE_TOP_K", 30), max_dense),
+            bm25_top_k=min(_positive_int("BM25_TOP_K", 30), max_bm25),
             rrf_k=_positive_int("RRF_K", 60),
             final_candidate_count=_positive_int("FINAL_CANDIDATE_COUNT", 8),
+            max_rerank_k=max_rerank,
             rerank_threshold=_optional_float("RERANK_THRESHOLD"),
             bm25_scan_limit=_positive_int("BM25_SCAN_LIMIT", 10000),
         )
@@ -525,6 +530,7 @@ class HybridRetriever:
             self.bm25.retrieve(query, user_id, version_ids),
         )
         fused_candidates = self.fusion.fuse(dense_candidates, bm25_candidates)
+        fused_candidates = fused_candidates[: self.context_builder.config.max_rerank_k]
         expanded_candidates = await self.parent_expander.expand(db, fused_candidates)
         reranked_candidates = await self.reranker.rerank(query, expanded_candidates)
         context = self.context_builder.build(reranked_candidates)

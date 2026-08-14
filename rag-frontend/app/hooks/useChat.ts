@@ -12,7 +12,7 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
   const [queryLoading, setQueryLoading] = useState(false);
   const fetchHistory = useCallback(async (id: string) => {
     if (!token) return;
-    const response = await apiFetch(`/api/v1/sessions/${id}/history`, token);
+    const response = await apiFetch(`/api/v1/sessions/${id}/messages`, token);
     if (response.status === 401) return onUnauthorized();
     if (!response.ok) return setMessages([]);
     const data = await response.json();

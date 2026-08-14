@@ -85,8 +85,8 @@ class ContextBuilder:
         self.history_config = history_config or HistoryConfig.from_settings()
         self.system_prompt = system_prompt
         self.budget_manager = budget_manager or ContextBudgetManager(
-            model_context_limit=settings.model_context_limit,
-            expected_output_tokens=settings.expected_output_tokens,
+            model_context_limit=min(settings.model_context_limit, settings.max_context_tokens),
+            expected_output_tokens=min(settings.expected_output_tokens, settings.max_output_tokens),
             summary_token_budget=self.history_config.summary_token_budget,
             history_token_budget=self.history_config.history_token_budget,
         )

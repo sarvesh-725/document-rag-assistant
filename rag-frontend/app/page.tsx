@@ -44,6 +44,8 @@ export default function Home() {
     setSelectedDocumentIds((previous) => previous.includes(result.document_id) ? previous : [...previous, result.document_id]);
   };
   const deleteDocument = async (documentId: string) => {
+    const confirmed = confirm('This document will be removed from your document library and will no longer be available to future questions. Existing running queries are allowed to finish. Continue?');
+    if (!confirmed) return;
     await documents.deleteDocument(documentId);
     setSelectedDocumentIds((previous) => previous.filter((id) => id !== documentId));
   };

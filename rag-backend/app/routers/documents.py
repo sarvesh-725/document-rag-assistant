@@ -8,8 +8,10 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.security import get_current_user
+from app.config import get_settings
 from app.database.connection import get_db
 from app.database.enums import IngestionStage, IngestionStatus, VersionStatus
 from app.database.models import User
@@ -18,6 +20,7 @@ from app.database.repositories import (
     create_document_version,
     create_ingestion_job,
     create_outbox_event,
+    count_live_documents,
     list_user_documents,
     retry_document_ingestion,
     soft_delete_document,
@@ -34,7 +37,7 @@ MIME_BY_EXTENSION = {
     ".pdf": "application/pdf",
     ".txt": "text/plain",
 }
-MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(10 * 1024 * 1024)))
+MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE", os.getenv("MAX_UPLOAD_SIZE_BYTES", str(10 * 1024 * 1024))))
 
 
 def normalize_filename(filename: str) -> str:
@@ -81,6 +84,14 @@ async def upload_document(
     """Create a global document and enqueue ingestion without doing RAG work."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
+    settings = get_settings()
+    document_count = (
+        await count_live_documents(db, current_user.id)
+        if isinstance(db, AsyncSession)
+        else 0
+    )
+    if document_count >= settings.max_documents_per_user:
+        raise HTTPException(status_code=413, detail="Document library limit reached.")
 
     # Kept temporarily for frontend compatibility. It never participates in
     # authorization and no session-document association is created.

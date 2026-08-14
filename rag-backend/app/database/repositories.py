@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -375,6 +375,16 @@ async def get_session_messages(
     
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def count_live_documents(db: AsyncSession, user_id: uuid.UUID) -> int:
+    result = await db.execute(
+        select(func.count(Document.id)).where(
+            Document.user_id == user_id,
+            Document.deleted_at.is_(None),
+        )
+    )
+    return int(result.scalar_one())
 
 
 async def get_recent_session_messages(

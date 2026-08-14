@@ -55,6 +55,16 @@ class Settings:
         self.outbox_polling_interval_seconds = self._positive_float(
             "OUTBOX_POLLING_INTERVAL_SECONDS", 1.0
         )
+        self.max_file_size = _positive_int("MAX_FILE_SIZE", 10 * 1024 * 1024)
+        self.max_documents_per_user = _positive_int("MAX_DOCUMENTS_PER_USER", 100)
+        self.max_selected_documents_per_query = _positive_int("MAX_SELECTED_DOCUMENTS_PER_QUERY", 20)
+        self.max_pages_per_file = _positive_int("MAX_PAGES_PER_FILE", 500)
+        self.max_child_chunks = _positive_int("MAX_CHILD_CHUNKS", 10000)
+        self.max_dense_k = _positive_int("MAX_DENSE_K", 100)
+        self.max_bm25_k = _positive_int("MAX_BM25_K", 100)
+        self.max_rerank_k = _positive_int("MAX_RERANK_K", 100)
+        self.max_context_tokens = _positive_int("MAX_CONTEXT_TOKENS", 32768)
+        self.max_output_tokens = _positive_int("MAX_OUTPUT_TOKENS", 4096)
 
     @staticmethod
     def _bounded_int(name: str, default: int, *, minimum: int, maximum: int) -> int:

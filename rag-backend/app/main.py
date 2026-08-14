@@ -223,7 +223,8 @@ async def delete_session(
     return {"status": "success", "message": "Session deleted."}
 
 
-@app.get("/api/v1/sessions/{session_id}/history")
+@app.get("/api/v1/sessions/{session_id}/history", include_in_schema=False)
+@app.get("/api/v1/sessions/{session_id}/messages")
 async def get_session_history(
     session_id: str,
     current_user: User = Depends(get_current_user),

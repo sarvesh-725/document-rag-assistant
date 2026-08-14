@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.connection import get_db
+from app.config import get_settings
 from app.database.models import User
 from app.auth.security import get_current_user
 from app.database.enums import MessageRole, MessageStatus, QueryRunStatus
@@ -263,6 +264,12 @@ async def query_chat_stream(
                 media_type="text/event-stream",
             )
         return existing_state
+
+    if len(request.selected_document_ids) > get_settings().max_selected_documents_per_query:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Too many documents selected for one query.",
+        )
 
     message = await create_message(
         db,

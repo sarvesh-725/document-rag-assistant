@@ -250,8 +250,9 @@ async def reconcile_stale_jobs(
     result = await db.execute(
         select(IngestionJob).where(
             IngestionJob.status.in_([
-                IngestionStatus.PENDING.value,
-                IngestionStatus.RUNNING.value,
+            IngestionStatus.PENDING.value,
+            IngestionStatus.RUNNING.value,
+            IngestionStatus.RETRYING.value,
             ]),
             IngestionJob.updated_at < cutoff,
         ).order_by(IngestionJob.updated_at.asc()).limit(limit)
