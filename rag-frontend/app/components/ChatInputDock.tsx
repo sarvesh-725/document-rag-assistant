@@ -1,361 +1,50 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, Send, Loader2, Search, UploadCloud, CheckCircle } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Paperclip, Search, Send, UploadCloud, Loader2 } from 'lucide-react';
 import { Document } from '../types';
-import { publishCrossTabEvent } from '../lib/crossTabSync';
-
-interface ChatInputDockProps {
-  token: string;
-  inputQuestion: string;
-  setInputQuestion: (val: string) => void;
-  onSubmit: (e: React.FormEvent) => void;
-  queryLoading: boolean;
-  documents: Document[];
-  fetchDocuments: () => Promise<void>;
-  selectedDocumentIds: string[];
-  setSelectedDocumentIds: React.Dispatch<React.SetStateAction<string[]>>;
-  onDelete: (document_id: string) => Promise<void>;
-}
+import DocumentList from './DocumentList';
 
 export default function ChatInputDock({
-  token,
-  inputQuestion,
-  setInputQuestion,
-  onSubmit,
-  queryLoading,
-  documents,
-  fetchDocuments,
-  selectedDocumentIds,
-  setSelectedDocumentIds,
-  onDelete,
-}: ChatInputDockProps) {
-  const [showOverlay, setShowOverlay] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  inputQuestion, setInputQuestion, onSubmit, queryLoading, documents, selectedDocumentIds,
+  onToggleDocument, onUpload, onDelete, onRetry,
+}: {
+  inputQuestion: string;
+  setInputQuestion: (value: string) => void;
+  onSubmit: (event: React.FormEvent) => void;
+  queryLoading: boolean;
+  documents: Document[];
+  selectedDocumentIds: string[];
+  onToggleDocument: (id: string) => void;
+  onUpload: (file: File) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onRetry: (id: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (showOverlay) {
-      fetchDocuments();
-    }
-  }, [showOverlay]);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (overlayRef.current && !overlayRef.current.contains(event.target as Node)) {
-        setShowOverlay(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const filteredDocuments = documents
-    .filter((f) => f.display_name.toLowerCase().includes(searchQuery.toLowerCase()));
-
-  const isActive = (document: Document) => {
-    return selectedDocumentIds.includes(document.document_id);
-  };
-
-  const handleToggleDocument = (document: Document) => {
-    const active = isActive(document);
-    if (active) {
-      setSelectedDocumentIds(prev => prev.filter(id => id !== document.document_id));
-    } else {
-      setSelectedDocumentIds(prev => [...prev, document.document_id]);
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const file = e.target.files[0];
+  const inputRef = useRef<HTMLInputElement>(null);
+  const filtered = documents.filter((document) => document.display_name.toLowerCase().includes(search.toLowerCase()));
+  const upload = async (file?: File) => {
+    if (!file) return;
     setUploading(true);
-    setUploadError(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: formData,
-        }
-      );
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Upload failed');
-      }
-      const data = await res.json();
-
-      setShowOverlay(false);
-      await fetchDocuments();
-      publishCrossTabEvent({ type: 'documents_changed' });
-      if (data.document_id && !selectedDocumentIds.includes(data.document_id)) {
-        setSelectedDocumentIds(prev => [...prev, data.document_id]);
-      }
-    } catch (err: any) {
-      setUploadError(err.message || 'Failed to upload document');
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
+    try { await onUpload(file); setOpen(false); } finally { setUploading(false); }
   };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
-    const file = e.dataTransfer.files[0];
-    
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext !== 'pdf' && ext !== 'txt') {
-      setUploadError('Invalid file type. Only PDF and TXT files are accepted.');
-      return;
-    }
-
-    setUploading(true);
-    setUploadError(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: formData,
-        }
-      );
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Upload failed');
-      }
-      const data = await res.json();
-
-      setShowOverlay(false);
-      await fetchDocuments();
-      publishCrossTabEvent({ type: 'documents_changed' });
-      if (data.document_id && !selectedDocumentIds.includes(data.document_id)) {
-        setSelectedDocumentIds(prev => [...prev, data.document_id]);
-      }
-    } catch (err: any) {
-      setUploadError(err.message || 'Failed to upload document');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <div className="relative w-full">
-      {}
-      {showOverlay && (
-        <div
-          ref={overlayRef}
-          className="absolute bottom-full left-0 mb-3 w-[450px] bg-slate-900/95 border border-slate-800 rounded-2xl shadow-2xl p-4 space-y-4 backdrop-blur-xl z-50 transition-all duration-200 animate-in fade-in slide-in-from-bottom-2"
-        >
-          <div className="flex justify-between items-center pb-2 border-b border-slate-800">
-            <h4 className="font-bold text-xs uppercase tracking-wider text-indigo-400">Context Assets Panel</h4>
-            <button
-              onClick={() => setShowOverlay(false)}
-              className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
-            >
-              Close
-            </button>
-          </div>
-
-          {}
-          <div
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-slate-800 hover:border-indigo-500/40 bg-slate-950/40 hover:bg-slate-950/60 rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-200 group"
-          >
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept=".pdf,.txt"
-              className="hidden"
-            />
-            {uploading ? (
-              <Loader2 size={24} className="animate-spin text-indigo-500" />
-            ) : (
-              <UploadCloud size={24} className="text-slate-500 group-hover:text-indigo-400 transition-colors" />
-            )}
-            <span className="text-xs font-semibold text-slate-300">
-              {uploading ? 'Processing upload...' : 'Upload PDF or TXT File'}
-            </span>
-            <span className="text-[10px] text-slate-500">Drag & drop or click to browse</span>
-          </div>
-
-          {uploadError && (
-            <div className="text-[10px] text-red-400 bg-red-950/20 border border-red-500/20 p-2 rounded-lg">
-              {uploadError}
-            </div>
-          )}
-
-          {}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Historical Files</span>
-            </div>
-
-            {}
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-2.5 text-slate-500" />
-              <input
-                type="text"
-                placeholder="Search global indexes..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-950/80 border border-slate-800 rounded-lg pl-9 pr-4 py-2 text-xs focus:border-indigo-500 focus:outline-none transition-colors text-slate-200"
-              />
-            </div>
-
-            {}
-            <div className="max-h-[160px] overflow-y-auto space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent pr-1">
-              {filteredDocuments.map((document) => {
-                const active = isActive(document);
-                const isProcessing = document.status === 'PROCESSING';
-                const isFailed = document.status === 'FAILED';
-                const isDeleting = document.status === 'DELETING';
-
-                return (
-                  <div
-                    key={document.document_id}
-                    onClick={() => {
-                      if (!isProcessing && !isDeleting && !isFailed) {
-                        handleToggleDocument(document);
-                      }
-                    }}
-                    className={`flex items-center justify-between p-2 rounded-lg border transition-all duration-150 ${
-                      active
-                        ? 'bg-slate-800/80 border-indigo-500/30'
-                        : 'bg-slate-950/30 border-slate-800/40 hover:border-slate-700/30'
-                    } ${isProcessing || isDeleting || isFailed ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'} group`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <input
-                        type="checkbox"
-                        checked={active}
-                        disabled={isProcessing || isDeleting || isFailed}
-                        onChange={() => {
-                          if (!isProcessing && !isDeleting && !isFailed) {
-                            handleToggleDocument(document);
-                          }
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-600 focus:ring-offset-slate-900 cursor-pointer disabled:cursor-not-allowed"
-                      />
-                      <span className="text-xs text-slate-300 font-medium truncate max-w-[220px]">
-                        {document.display_name}
-                      </span>
-                    </div>
-
-                    <div className="text-[10px] flex items-center gap-3 font-semibold">
-                      {isProcessing ? (
-                        <div className="flex items-center gap-1 text-indigo-400">
-                          <Loader2 size={10} className="animate-spin" />
-                          <span>Ingesting</span>
-                        </div>
-                      ) : isFailed ? (
-                        <span className="text-red-400">Ingestion Failed</span>
-                      ) : null}
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (confirm(`Are you sure you want to permanently delete ${document.display_name}?`)) {
-                            await onDelete(document.document_id);
-                            await fetchDocuments();
-                          }
-                        }}
-                        className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
-                        title="Delete file permanently"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {filteredDocuments.length === 0 && (
-                <p className="text-[11px] text-slate-500 italic text-center py-4">
-                  No documents found in global index.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {}
-      {(() => {
-        return (
-          <form onSubmit={onSubmit} className="flex gap-2 items-end bg-slate-900 border border-slate-800 rounded-2xl p-2 focus-within:border-indigo-500/50 transition-colors shadow-xl">
-            <div className="flex-1 flex items-center relative pl-10">
-              {}
-              <button
-                type="button"
-                onClick={() => setShowOverlay(!showOverlay)}
-                className="absolute left-2 bottom-2 text-slate-400 hover:text-slate-200 p-2 rounded-xl hover:bg-slate-800 transition-all cursor-pointer"
-                title="Attach documents"
-              >
-                <Paperclip size={18} />
-              </button>
-
-              {}
-              <textarea
-                disabled={queryLoading}
-                rows={1}
-                value={inputQuestion}
-                onChange={(e) => setInputQuestion(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (inputQuestion.trim() && !queryLoading) {
-                      onSubmit(e);
-                    }
-                  }
-                }}
-                placeholder="Ask a question (RAG active if files selected, else standard chat)..."
-                className="w-full bg-transparent border-0 resize-none text-sm text-slate-100 placeholder-slate-500 focus:ring-0 focus:outline-none min-h-[36px] py-2 max-h-[160px] pr-2 scrollbar-thin scrollbar-thumb-slate-800"
-              />
-            </div>
-
-            {}
-            <button
-              type="submit"
-              disabled={queryLoading || !inputQuestion.trim()}
-              className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white p-3 rounded-xl transition-all shrink-0 shadow-sm flex items-center justify-center h-10 w-10 cursor-pointer"
-            >
-              {queryLoading ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <Send size={16} />
-              )}
-            </button>
-          </form>
-        );
-      })()}
-    </div>
-  );
+  return <div className="relative w-full">
+    {open && <div className="absolute bottom-full left-0 mb-3 w-[460px] max-w-[calc(100vw-2rem)] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-4 space-y-3 z-50">
+      <div className="flex justify-between"><h4 className="text-xs font-bold uppercase tracking-wider text-indigo-400">Documents</h4><button onClick={() => setOpen(false)} className="text-xs text-slate-400">Close</button></div>
+      <div onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void upload(event.dataTransfer.files[0]); }} className="border-2 border-dashed border-slate-800 rounded-xl p-4 flex flex-col items-center gap-2 cursor-pointer">
+        <input ref={inputRef} type="file" accept=".pdf,.txt" className="hidden" onChange={(event) => void upload(event.target.files?.[0])} />
+        {uploading ? <Loader2 size={20} className="animate-spin text-indigo-400" /> : <UploadCloud size={20} className="text-slate-500" />}
+        <span className="text-xs text-slate-300">{uploading ? 'Uploading...' : 'Upload PDF or TXT'}</span>
+      </div>
+      <div className="relative"><Search size={14} className="absolute left-3 top-2.5 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search documents" className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs" /></div>
+      <DocumentList documents={filtered} selectedDocumentIds={selectedDocumentIds} onToggle={onToggleDocument} onDelete={onDelete} onRetry={onRetry} />
+    </div>}
+    <form onSubmit={onSubmit} className="flex gap-2 items-end bg-slate-900 border border-slate-800 rounded-2xl p-2">
+      <button type="button" onClick={() => setOpen(!open)} className="text-slate-400 p-2"><Paperclip size={18} /></button>
+      <textarea disabled={queryLoading} rows={1} value={inputQuestion} onChange={(event) => setInputQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (inputQuestion.trim()) onSubmit(event); } }} placeholder="Ask a question..." className="flex-1 bg-transparent resize-none text-sm py-2 outline-none" />
+      <button type="submit" disabled={queryLoading || !inputQuestion.trim()} className="bg-indigo-600 disabled:bg-slate-800 text-white p-3 rounded-xl"><Send size={16} /></button>
+    </form>
+  </div>;
 }

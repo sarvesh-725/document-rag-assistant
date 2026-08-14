@@ -124,9 +124,10 @@ class ContextBuilder:
             recent.append({"role": str(role or "user"), "content": str(content or "")})
         evidence: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
-        for item in budgeted.evidence:
+        for index, item in enumerate(budgeted.evidence, start=1):
             candidate = _candidate(item)
             record = {
+                "source_id": f"S{index}",
                 "document_id": getattr(candidate, "document_id", None),
                 "version_id": getattr(candidate, "version_id", None),
                 "display_name": getattr(candidate, "display_name", ""),
@@ -147,6 +148,7 @@ class ContextBuilder:
                 {
                     key: record[key]
                     for key in (
+                        "source_id",
                         "document_id",
                         "version_id",
                         "display_name",

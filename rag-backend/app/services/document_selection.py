@@ -63,6 +63,13 @@ async def resolve_selected_documents(
             DocumentStatus.DELETED.value,
         }:
             raise DocumentSelectionError(f"Document is deleted: {document_id}")
+        if document.status in {
+            DocumentStatus.UPLOADING.value,
+            DocumentStatus.PROCESSING.value,
+        }:
+            raise DocumentSelectionError(
+                "The selected document is still being processed. Please wait until it is ready."
+            )
         if document.status != DocumentStatus.READY.value:
             raise DocumentSelectionError(f"Document is not ready: {document_id}")
         if document.current_version_id is None:

@@ -95,6 +95,9 @@ def test_context_builder_emits_citations_and_structured_package():
     )
 
     assert package.evidence[0]["display_name"] == "report.pdf"
+    assert package.evidence[0]["source_id"] == "S1"
+    assert package.citations[0]["source_id"] == "S1"
+    assert package.citations[0]["chunk_id"] == item.chunk_id
     assert package.citations[0]["page_start"] == 2
     assert package.query_analysis == analysis()
     assert package.estimated_tokens > 0

@@ -8,3 +8,25 @@ export type Document = {
   status: DocumentStatus;
   duplicate_index: number;
 };
+
+export type Source = {
+  source_id: string;
+  document_id: string;
+  version_id?: string;
+  display_name: string;
+  page?: number;
+  section?: string;
+  chunk_id?: string;
+};
+
+export type ChatMessage = {
+  role: 'user' | 'assistant';
+  text: string;
+  bound_document_ids?: string[];
+  sources?: Source[];
+};
+
+export type SessionSummary = {
+  id: string;
+  title: string | null;
+};

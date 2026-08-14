@@ -126,7 +126,7 @@ async def test_processing_document_is_rejected():
     document.status = DocumentStatus.PROCESSING.value
     db = FakeDb(documents={document.id: document}, versions={version.id: version})
 
-    with pytest.raises(DocumentSelectionError, match="not ready"):
+    with pytest.raises(DocumentSelectionError, match="still being processed"):
         await resolve_selected_documents(
             db,
             authenticated_user_id=user_id,

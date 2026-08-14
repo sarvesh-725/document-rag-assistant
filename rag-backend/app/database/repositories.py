@@ -584,6 +584,56 @@ async def get_ingestion_job_for_user(
     return result.scalar_one_or_none()
 
 
+async def retry_document_ingestion(
+    db: AsyncSession, document_id: uuid.UUID, user_id: uuid.UUID
+) -> Optional[IngestionJob]:
+    """Requeue the latest failed owned ingestion without changing its source."""
+    document_result = await db.execute(
+        select(Document)
+        .where(
+            Document.id == document_id,
+            Document.user_id == user_id,
+            Document.deleted_at.is_(None),
+        )
+        .with_for_update()
+    )
+    document = document_result.scalar_one_or_none()
+    if document is None:
+        return None
+    job_result = await db.execute(
+        select(IngestionJob)
+        .where(IngestionJob.document_id == document_id)
+        .order_by(IngestionJob.created_at.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    job = job_result.scalar_one_or_none()
+    if job is None:
+        return None
+    if job.status not in {IngestionStatus.FAILED.value, IngestionStatus.CANCELLED.value}:
+        return job
+    version = await db.get(DocumentVersion, job.version_id)
+    if version is None or not version.storage_key:
+        return None
+    version.status = VersionStatus.PROCESSING.value
+    document.status = DocumentStatus.PROCESSING.value
+    job.status = IngestionStatus.RETRYING.value
+    job.stage = IngestionStage.UPLOAD.value
+    job.error_code = None
+    job.error_message = None
+    job.completed_at = None
+    job.updated_at = datetime.utcnow()
+    await create_outbox_event(db, "DOCUMENT_INGESTION_REQUESTED", job.id, {
+        "ingestion_job_id": str(job.id),
+        "document_id": str(document.id),
+        "version_id": str(version.id),
+        "storage_key": version.storage_key,
+        "user_id": str(user_id),
+    })
+    await db.commit()
+    return job
+
+
 # -----------------------------------------------------------------------------
 # ConversationSummary & OutboxEvent
 # -----------------------------------------------------------------------------

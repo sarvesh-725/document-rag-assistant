@@ -19,6 +19,7 @@ from app.database.repositories import (
     create_ingestion_job,
     create_outbox_event,
     list_user_documents,
+    retry_document_ingestion,
     soft_delete_document,
 )
 from app.services.storage import LocalStorageService
@@ -205,6 +206,22 @@ async def get_global_documents(
 ):
     """Compatibility alias for the pre-Phase-17 list path."""
     return await _list_documents(current_user, db)
+
+
+@router.post("/{document_id}/retry")
+async def retry_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    try:
+        document_uuid = uuid.UUID(document_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid document ID format.") from exc
+    job = await retry_document_ingestion(db, document_uuid, current_user.id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Failed ingestion job not found.")
+    return {"job_id": str(job.id), "status": job.status}
 
 
 @router.delete("/{document_id}")

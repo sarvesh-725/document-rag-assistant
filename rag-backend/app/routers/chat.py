@@ -145,15 +145,17 @@ async def _stream_query_response(
         )
         yield format_sse_event("retrieval_complete", retrieval_data)
         for index, citation in enumerate(context_package.citations, start=1):
-            yield format_sse_event(
-                "source",
-                {
-                    "document_id": citation.get("document_id"),
-                    "display_name": citation.get("display_name"),
-                    "page": citation.get("page_start"),
-                    "source_id": f"S{index}",
-                },
-            )
+            source = {
+                "source_id": citation.get("source_id") or f"S{index}",
+                "document_id": citation.get("document_id"),
+                "version_id": citation.get("version_id"),
+                "display_name": citation.get("display_name"),
+                "section": citation.get("section"),
+                "chunk_id": citation.get("chunk_id"),
+            }
+            if citation.get("page_start") is not None:
+                source["page"] = citation["page_start"]
+            yield format_sse_event("source", source)
 
         if not grounded:
             generated = [NO_GROUNDING_RESPONSE]
