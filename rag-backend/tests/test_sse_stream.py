@@ -39,6 +39,11 @@ def parse_frames(frames):
     return parsed
 
 
+async def fake_gemini_stream(_messages):
+    yield "generated"
+    yield "more"
+
+
 def test_sse_frames_are_typed_and_blank_line_delimited():
     frame = format_sse_event("token", {"text": "hello"})
     assert frame == 'event: token\ndata: {"text":"hello"}\n\n'
@@ -53,6 +58,7 @@ async def test_stream_emits_required_events_and_completes_state():
     update = AsyncMock()
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(chat, "update_message_status", update)
+    monkeypatch.setattr(chat, "gemini_answer_streamer", SimpleNamespace(stream=fake_gemini_stream))
     try:
         frames = [
             frame
@@ -87,6 +93,7 @@ async def test_stream_cancellation_persists_partial_content_and_cancelled_status
     update = AsyncMock()
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(chat, "update_message_status", update)
+    monkeypatch.setattr(chat, "gemini_answer_streamer", SimpleNamespace(stream=fake_gemini_stream))
     try:
         frames = [
             frame
@@ -107,3 +114,44 @@ async def test_stream_cancellation_persists_partial_content_and_cancelled_status
     assert query_run.status == "CANCELLED"
     assert update.await_args.args[2] == "CANCELLED"
     assert update.await_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_generation_failure_persists_partial_content_and_failed_status():
+    query_run = SimpleNamespace(id=uuid.uuid4(), status="RUNNING", completed_at=None)
+    assistant = SimpleNamespace(id=uuid.uuid4())
+    request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+    db = AsyncMock()
+    update = AsyncMock()
+
+    async def broken_stream(_messages):
+        yield "partial"
+        raise RuntimeError("Gemini failed")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(chat, "update_message_status", update)
+    monkeypatch.setattr(
+        chat,
+        "gemini_answer_streamer",
+        SimpleNamespace(stream=broken_stream),
+    )
+    try:
+        frames = [
+            frame
+            async for frame in chat._stream_query_response(
+                http_request=request,
+                db=db,
+                query_run=query_run,
+                assistant_message=assistant,
+                message=SimpleNamespace(id=uuid.uuid4()),
+                context_package=package(),
+                retrieval_result=None,
+            )
+        ]
+    finally:
+        monkeypatch.undo()
+
+    assert parse_frames(frames)[-1][0] == "error"
+    assert query_run.status == "FAILED"
+    assert update.await_args.args[2] == "FAILED"
+    assert update.await_args.kwargs["content"] == "partial"

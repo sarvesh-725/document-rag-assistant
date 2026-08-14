@@ -31,6 +31,7 @@ from app.services.document_selection import (
 )
 from app.services.context_builder import ContextBuilder as PromptContextBuilder
 from app.services.conversation_context import ConversationContext, load_conversation_context
+from app.services.gemini_generation import GeminiAnswerStreamer
 from app.services.intent_classifier import QueryAnalysis, classify_intent
 from app.services.retrieval import (
     HybridRetriever,
@@ -44,6 +45,7 @@ logger = logging.getLogger("chat_router")
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 hybrid_retriever = HybridRetriever()
 prompt_context_builder = PromptContextBuilder()
+gemini_answer_streamer = GeminiAnswerStreamer()
 NO_GROUNDING_RESPONSE = "The selected documents do not contain enough information to answer this question."
 
 
@@ -153,18 +155,27 @@ async def _stream_query_response(
                 },
             )
 
-        answer = (
-            NO_GROUNDING_RESPONSE
-            if not grounded
-            else "Retrieved evidence is available for answer generation."
-        )
-        for token in answer.split(" "):
-            if await http_request.is_disconnected():
-                raise _ClientDisconnected()
-            token = token if not partial else f" {token}"
-            partial += token
-            yield format_sse_event("token", {"text": token})
-            await asyncio.sleep(0)
+        if not grounded:
+            generated = [NO_GROUNDING_RESPONSE]
+        else:
+            generated = gemini_answer_streamer.stream(
+                context_package.to_llm_messages()
+            )
+        if isinstance(generated, list):
+            generated = iter(generated)
+            for piece in generated:
+                if await http_request.is_disconnected():
+                    raise _ClientDisconnected()
+                partial += piece
+                yield format_sse_event("token", {"text": piece})
+                await asyncio.sleep(0)
+        else:
+            async for piece in generated:
+                if await http_request.is_disconnected():
+                    raise _ClientDisconnected()
+                partial += piece
+                yield format_sse_event("token", {"text": piece})
+                await asyncio.sleep(0)
 
         await update_message_status(
             db, assistant_message.id, MessageStatus.COMPLETED.value, content=partial
