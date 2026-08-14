@@ -15,6 +15,7 @@ from app.database.enums import (
 )
 from app.database.models import Document, DocumentVersion, IngestionJob
 from app.database.repositories import create_outbox_event
+from app.observability import metrics
 
 
 STAGE_ORDER = tuple(IngestionStage)
@@ -262,6 +263,7 @@ async def reconcile_stale_jobs(
         document = await db.get(Document, job.document_id)
         version = await db.get(DocumentVersion, job.version_id)
         if document is None or version is None:
+            metrics.increment("stuck_jobs")
             job.attempt_count = (job.attempt_count or 0) + 1
             job.status = IngestionStatus.FAILED.value
             job.error_code = "RECONCILIATION_MISSING_ENTITY"
@@ -274,6 +276,7 @@ async def reconcile_stale_jobs(
         if document.status in {DocumentStatus.DELETING.value, DocumentStatus.DELETED.value} or version.status in {
             VersionStatus.DELETING.value, VersionStatus.DELETED.value,
         }:
+            metrics.increment("stuck_jobs")
             job.attempt_count = (job.attempt_count or 0) + 1
             job.status = IngestionStatus.CANCELLED.value
             job.error_code = "RECONCILIATION_DELETED_ENTITY"
@@ -284,6 +287,7 @@ async def reconcile_stale_jobs(
             reconciled += 1
             continue
         job.status = IngestionStatus.RETRYING.value
+        metrics.increment("stuck_jobs")
         job.attempt_count = (job.attempt_count or 0) + 1
         job.error_code = "STALE_JOB_RECONCILED"
         job.error_message = "Job was stale and requeued by reconciliation"

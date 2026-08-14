@@ -8,6 +8,7 @@ owns document/version state.
 import os
 import uuid
 import logging
+import time
 from dataclasses import dataclass
 from dotenv import load_dotenv
 from qdrant_client import AsyncQdrantClient
@@ -18,6 +19,7 @@ from app.services.chunking import (
     ParsedDocument, parse_parent_child_chunks, deterministic_point_id,
     deterministic_parent_id,
 )
+from app.observability import metrics
 
 load_dotenv(override=True)
 
@@ -201,7 +203,9 @@ async def process_and_store_document(
         return 0
 
     embeddings = _get_embeddings()
+    embedding_started = time.perf_counter()
     embeddings_list = embeddings.embed_documents([child.child_text for child in children])
+    metrics.observe("embedding_latency", time.perf_counter() - embedding_started)
 
     points = []
     for child, vector in zip(children, embeddings_list):

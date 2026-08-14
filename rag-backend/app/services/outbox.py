@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import OutboxEvent
+from app.observability import metrics
 
 logger = logging.getLogger("outbox")
 
@@ -63,8 +64,10 @@ async def publish_pending_outbox_events(
         .order_by(OutboxEvent.created_at.asc())
         .limit(limit)
     )
+    events = result.scalars().all()
+    metrics.increment("queue_depth", len(events))
     published = 0
-    for event in result.scalars().all():
+    for event in events:
         event.attempt_count = (event.attempt_count or 0) + 1
         try:
             await enqueue(event)

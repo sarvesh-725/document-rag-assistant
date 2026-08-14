@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from dataclasses import asdict
 from typing import List
@@ -41,6 +42,7 @@ from app.services.retrieval import (
 )
 from app.services.sse import format_sse_event
 from app.services.vector_access import owned_vector_filter
+from app.observability import metrics, structured_log
 
 logger = logging.getLogger("chat_router")
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
@@ -130,6 +132,7 @@ async def _stream_query_response(
     retrieval_result,
 ):
     """Emit typed SSE events and persist terminal/partial state."""
+    started = time.perf_counter()
     partial = ""
     grounded = retrieval_result is None or has_sufficient_evidence(retrieval_result)
     retrieval_data = {
@@ -139,6 +142,8 @@ async def _stream_query_response(
         else 0,
         "context_count": len(context_package.evidence),
     }
+    if retrieval_result is not None and not grounded:
+        metrics.increment("retrieval_no_hit_rate")
     try:
         yield format_sse_event(
             "message_start",
@@ -158,6 +163,7 @@ async def _stream_query_response(
                 source["page"] = citation["page_start"]
             yield format_sse_event("source", source)
 
+        llm_started = time.perf_counter()
         if not grounded:
             generated = [NO_GROUNDING_RESPONSE]
         else:
@@ -179,12 +185,26 @@ async def _stream_query_response(
                 partial += piece
                 yield format_sse_event("token", {"text": piece})
                 await asyncio.sleep(0)
+        metrics.observe("LLM_latency", time.perf_counter() - llm_started)
 
         await update_message_status(
             db, assistant_message.id, MessageStatus.COMPLETED.value, content=partial
         )
         transition_query_run_status(query_run, QueryRunStatus.COMPLETED.value)
         await db.commit()
+        metrics.observe("answer_latency_p50", time.perf_counter() - started)
+        structured_log(
+            logger,
+            "answer_completed",
+            document_id=None,
+            version_id=None,
+            job_id=None,
+            message_id=str(assistant_message.id),
+            query_run_id=str(query_run.id),
+            status=MessageStatus.COMPLETED.value,
+            error_code=None,
+            latency=round((time.perf_counter() - started) * 1000, 2),
+        )
         yield format_sse_event(
             "message_complete",
             {"status": MessageStatus.COMPLETED.value, "message_id": str(assistant_message.id)},
@@ -204,6 +224,8 @@ async def _stream_query_response(
                 {"status": MessageStatus.CANCELLED.value, "message_id": str(assistant_message.id)},
             )
     except Exception as exc:
+        if grounded:
+            metrics.increment("LLM_failure_rate")
         try:
             await update_message_status(
                 db, assistant_message.id, MessageStatus.FAILED.value, content=partial

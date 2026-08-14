@@ -12,6 +12,7 @@ import os
 import re
 import uuid
 import logging
+import time
 from asyncio import gather
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional, Protocol, Sequence
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import Document, DocumentParent, DocumentVersion
 from app.services import rag_engine
 from app.services.vector_access import owned_vector_filter
+from app.observability import metrics
 
 logger = logging.getLogger("retrieval")
 
@@ -139,7 +141,7 @@ class DenseRetriever:
     async def retrieve(
         self, query: str, user_id: uuid.UUID, version_ids: Sequence[uuid.UUID]
     ) -> list[RetrievalCandidate]:
-        if not version_ids or (not self._injected_client and not rag_engine.QDRANT_ENDPOINT):
+        if self.config.dense_top_k <= 0 or not version_ids or (not self._injected_client and not rag_engine.QDRANT_ENDPOINT):
             return []
         await rag_engine.init_qdrant()
         embedding_service = self.embeddings or rag_engine._get_embeddings()
@@ -257,6 +259,8 @@ class BM25Retriever:
     async def retrieve(
         self, query: str, user_id: uuid.UUID, version_ids: Sequence[uuid.UUID]
     ) -> list[RetrievalCandidate]:
+        if self.config.bm25_top_k <= 0:
+            return []
         documents = await self._scroll_candidates(user_id, version_ids)
         index = BM25Index(documents)
         scored = [replace(document, bm25_score=score) for document, score in zip(documents, index.score(query))]
@@ -394,6 +398,7 @@ class Reranker:
             )
             return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
         try:
+            started = time.perf_counter()
             result = await self.client.rerank(
                 model=self.model,
                 query=query,
@@ -409,10 +414,12 @@ class Reranker:
                 key=lambda candidate: candidate.rerank_score or 0.0,
                 reverse=True,
             )
+            metrics.observe("rerank_latency", time.perf_counter() - started)
             return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
         except Exception:
             global reranker_failure_count
             reranker_failure_count += 1
+            metrics.increment("reranker_failure_rate")
             logger.exception("Cohere reranking failed; using fusion-ranked candidates")
             ordered = sorted(
                 candidates,
@@ -508,13 +515,21 @@ class HybridRetriever:
         reranker: Optional[Reranker] = None,
         context_builder: Optional[ContextBuilder] = None,
         evaluation_hook: Optional[RetrievalEvaluationHook] = None,
+        strategy: Any = None,
     ):
         config = RetrievalConfig.from_env()
+        if strategy is not None:
+            config = replace(
+                config,
+                dense_top_k=min(max(0, strategy.dense_top_k), config.dense_top_k),
+                bm25_top_k=min(max(0, strategy.bm25_top_k), config.bm25_top_k),
+                max_rerank_k=min(max(0, strategy.rerank_top_k), config.max_rerank_k),
+            )
         self.dense = dense or DenseRetriever(config=config)
         self.bm25 = bm25 or BM25Retriever(config=config)
         self.fusion = fusion or RetrievalFusion(config.rrf_k)
-        self.parent_expander = parent_expander or ParentExpander()
-        self.reranker = reranker or Reranker()
+        self.parent_expander = parent_expander or (ParentExpander() if strategy is None or strategy.parent_expansion else None)
+        self.reranker = reranker or (Reranker() if strategy is None or strategy.reranker else None)
         self.context_builder = context_builder or ContextBuilder(config)
         self.evaluation_hook = evaluation_hook
 
@@ -531,8 +546,16 @@ class HybridRetriever:
         )
         fused_candidates = self.fusion.fuse(dense_candidates, bm25_candidates)
         fused_candidates = fused_candidates[: self.context_builder.config.max_rerank_k]
-        expanded_candidates = await self.parent_expander.expand(db, fused_candidates)
-        reranked_candidates = await self.reranker.rerank(query, expanded_candidates)
+        expanded_candidates = (
+            await self.parent_expander.expand(db, fused_candidates)
+            if self.parent_expander is not None
+            else fused_candidates
+        )
+        reranked_candidates = (
+            await self.reranker.rerank(query, expanded_candidates)
+            if self.reranker is not None
+            else expanded_candidates
+        )
         context = self.context_builder.build(reranked_candidates)
         if self.evaluation_hook is not None:
             self.evaluation_hook.on_retrieval_complete(

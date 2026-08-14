@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import List, Optional
@@ -34,6 +35,7 @@ import taskiq_fastapi
 
 from app.services.intent_classifier import train_classifier
 from app.services.rag_engine import init_qdrant
+from app.observability import metrics, request_id, structured_log, set_request_context
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,6 +63,36 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def request_observability(request: Request, call_next):
+    started = time.perf_counter()
+    correlation_id = request.headers.get("X-Request-ID") or request_id()
+    set_request_context(request_id=correlation_id)
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        status_code = response.status_code if response is not None else 500
+        structured_log(
+            logger,
+            "http_request",
+            request_id=correlation_id,
+            method=request.method,
+            path=request.url.path,
+            latency=round((time.perf_counter() - started) * 1000, 2),
+            status=status_code,
+            error_code=None if status_code < 400 else f"HTTP_{status_code}",
+        )
+        if response is not None:
+            response.headers["X-Request-ID"] = correlation_id
+
+
+@app.get("/metrics")
+async def get_metrics():
+    return metrics.snapshot()
 
 app.add_middleware(
     CORSMiddleware,

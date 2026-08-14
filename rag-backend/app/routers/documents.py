@@ -26,6 +26,7 @@ from app.database.repositories import (
     soft_delete_document,
 )
 from app.services.storage import LocalStorageService
+from app.observability import metrics, structured_log
 
 logger = logging.getLogger("documents_router")
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -153,6 +154,18 @@ async def upload_document(
         await storage_service.delete(storage_key, current_user.id)
         raise
 
+    metrics.increment("upload_success_rate")
+    structured_log(
+        logger,
+        "document_upload_accepted",
+        user_id=str(current_user.id),
+        document_id=str(document_id),
+        version_id=str(version_id),
+        job_id=str(ingestion_job_id),
+        status="PROCESSING",
+        error_code=None,
+        latency=None,
+    )
     return {
         "document_id": str(document_id),
         "version_id": str(version_id),
