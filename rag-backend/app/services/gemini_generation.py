@@ -11,7 +11,7 @@ class GeminiAnswerStreamer:
     """Stream Gemini text from the already-built, sectioned prompt package."""
 
     def __init__(self, model: str | None = None, llm: Any = None):
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
         self.llm = llm
 
     def _get_llm(self):
@@ -37,9 +37,7 @@ class GeminiAnswerStreamer:
                 continue
             if isinstance(content, list):
                 text = "".join(
-                    part.get("text", "")
-                    for part in content
-                    if isinstance(part, dict)
+                    part.get("text", "") for part in content if isinstance(part, dict)
                 )
                 if text:
                     yield text
