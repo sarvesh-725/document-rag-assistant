@@ -108,14 +108,21 @@ async def _existing_request_response(
 async def _existing_sse_response(state: dict):
     yield format_sse_event(
         "message_start",
-        {"message_id": state.get("message_id"), "query_run_id": state.get("query_run_id")},
+        {
+            "message_id": state.get("assistant_message_id") or state.get("message_id"),
+            "client_request_id": state.get("client_request_id"),
+            "query_run_id": state.get("query_run_id"),
+        },
     )
     yield format_sse_event("retrieval_complete", state.get("retrieval", {}))
     if state.get("answer"):
         yield format_sse_event("token", {"text": state["answer"]})
     yield format_sse_event(
         "message_complete",
-        {"status": state.get("status"), "message_id": state.get("message_id")},
+        {
+            "status": state.get("status"),
+            "message_id": state.get("assistant_message_id") or state.get("message_id"),
+        },
     )
 
 
@@ -149,7 +156,11 @@ async def _stream_query_response(
     try:
         yield format_sse_event(
             "message_start",
-            {"message_id": str(assistant_message.id), "query_run_id": str(query_run.id)},
+            {
+                "message_id": str(assistant_message.id),
+                "client_request_id": getattr(message, "client_request_id", None),
+                "query_run_id": str(query_run.id),
+            },
         )
         yield format_sse_event("retrieval_complete", retrieval_data)
         for index, citation in enumerate(context_package.citations, start=1):
