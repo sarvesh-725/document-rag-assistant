@@ -9,5 +9,5 @@ export default function ChatArea({ messages, documents }: { messages: ChatMessag
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-  return <div className="flex-1 overflow-y-auto p-6 space-y-6">{messages.map((message, index) => <MessageBubble key={`${index}-${message.role}`} message={message} documents={documents} />)}<div ref={endRef} /></div>;
+  return <div className="flex-1 overflow-y-auto p-6 space-y-6">{messages.map((message, index) => <MessageBubble key={message.message_id || `${message.role}-${message.client_request_id || index}`} message={message} documents={documents} />)}<div ref={endRef} /></div>;
 }

@@ -66,8 +66,9 @@ async def test_stream_emits_required_events_and_completes_state():
                 http_request=request,
                 db=db,
                 query_run=query_run,
-                assistant_message=assistant,
-                message=SimpleNamespace(id=uuid.uuid4()),
+                query_run_id=query_run.id,
+                assistant_message_id=assistant.id,
+                client_request_id="request-1",
                 context_package=package(),
                 retrieval_result=None,
             )
@@ -101,8 +102,9 @@ async def test_stream_cancellation_persists_partial_content_and_cancelled_status
                 http_request=request,
                 db=db,
                 query_run=query_run,
-                assistant_message=assistant,
-                message=SimpleNamespace(id=uuid.uuid4()),
+                query_run_id=query_run.id,
+                assistant_message_id=assistant.id,
+                client_request_id="request-1",
                 context_package=package(),
                 retrieval_result=None,
             )
@@ -142,8 +144,9 @@ async def test_generation_failure_persists_partial_content_and_failed_status():
                 http_request=request,
                 db=db,
                 query_run=query_run,
-                assistant_message=assistant,
-                message=SimpleNamespace(id=uuid.uuid4()),
+                query_run_id=query_run.id,
+                assistant_message_id=assistant.id,
+                client_request_id="request-1",
                 context_package=package(),
                 retrieval_result=None,
             )
@@ -155,3 +158,19 @@ async def test_generation_failure_persists_partial_content_and_failed_status():
     assert query_run.status == "FAILED"
     assert update.await_args.args[2] == "FAILED"
     assert update.await_args.kwargs["content"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_existing_running_request_does_not_emit_a_terminal_event():
+    state = {
+        "status": "RUNNING",
+        "message_id": str(uuid.uuid4()),
+        "assistant_message_id": str(uuid.uuid4()),
+        "query_run_id": str(uuid.uuid4()),
+        "client_request_id": "request-1",
+    }
+
+    events = parse_frames([frame async for frame in chat._existing_sse_response(state)])
+
+    assert [event[0] for event in events] == ["message_start", "retrieval_complete"]
+    assert events[0][1]["message_id"] == state["assistant_message_id"]

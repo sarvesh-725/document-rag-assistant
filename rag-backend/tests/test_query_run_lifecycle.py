@@ -53,7 +53,7 @@ async def test_successful_query_transitions_running_to_completed(monkeypatch):
     configure_query(monkeypatch, current_user, session_id, query_run)
     db = AsyncMock()
 
-    response = await chat.query_chat_stream(request, current_user, db)
+    response = await chat.query_chat_stream(request, db, None, current_user.id)
 
     assert response["status"] == QueryRunStatus.COMPLETED.value
     assert query_run.status == QueryRunStatus.COMPLETED.value
@@ -70,7 +70,7 @@ async def test_disconnected_client_cancels_running_query(monkeypatch):
     disconnected = SimpleNamespace(is_disconnected=AsyncMock(return_value=True))
     db = AsyncMock()
 
-    response = await chat.query_chat_stream(request, current_user, db, disconnected)
+    response = await chat.query_chat_stream(request, db, disconnected, current_user.id)
 
     assert response["status"] == QueryRunStatus.CANCELLED.value
     assert query_run.status == QueryRunStatus.CANCELLED.value
@@ -87,7 +87,7 @@ async def test_application_failure_transitions_query_to_failed(monkeypatch):
     monkeypatch.setattr(chat, "add_query_run_documents", AsyncMock(side_effect=RuntimeError("retrieval failed")))
 
     with pytest.raises(RuntimeError, match="retrieval failed"):
-        await chat.query_chat_stream(request, current_user, AsyncMock())
+        await chat.query_chat_stream(request, AsyncMock(), None, current_user.id)
 
     assert query_run.status == QueryRunStatus.FAILED.value
     assert query_run.completed_at is not None

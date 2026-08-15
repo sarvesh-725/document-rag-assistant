@@ -42,8 +42,9 @@ async def test_query_creates_query_run_document_rows_from_resolved_versions(monk
             question="What matters here?",
             selected_document_ids=[str(document_a.document_id), str(document_b.document_id)],
         ),
-        current_user,
         db,
+        None,
+        current_user.id,
     )
 
     chat.resolve_selected_documents.assert_awaited_once_with(
@@ -89,8 +90,9 @@ async def test_query_rejects_invalid_selection_without_creating_query_run(monkey
                 question="What matters here?",
                 selected_document_ids=["not-a-uuid"],
             ),
-            current_user,
             db,
+            None,
+            current_user.id,
         )
 
     assert error.value.status_code == 400

@@ -6,13 +6,12 @@ import { Document } from '../types';
 import DocumentList from './DocumentList';
 
 export default function ChatInputDock({
-  inputQuestion, setInputQuestion, onSubmit, queryLoading, documents, selectedDocumentIds,
+  inputQuestion, setInputQuestion, onSubmit, documents, selectedDocumentIds,
   onToggleDocument, onUpload, onDelete, onRetry,
 }: {
   inputQuestion: string;
   setInputQuestion: (value: string) => void;
   onSubmit: (event: React.FormEvent) => void;
-  queryLoading: boolean;
   documents: Document[];
   selectedDocumentIds: string[];
   onToggleDocument: (id: string) => void;
@@ -43,8 +42,8 @@ export default function ChatInputDock({
     </div>}
     <form onSubmit={onSubmit} className="flex gap-2 items-end bg-slate-900 border border-slate-800 rounded-2xl p-2">
       <button type="button" onClick={() => setOpen(!open)} className="text-slate-400 p-2"><Paperclip size={18} /></button>
-      <textarea disabled={queryLoading} rows={1} value={inputQuestion} onChange={(event) => setInputQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (inputQuestion.trim()) onSubmit(event); } }} placeholder="Ask a question..." className="flex-1 bg-transparent resize-none text-sm py-2 outline-none" />
-      <button type="submit" disabled={queryLoading || !inputQuestion.trim()} className="bg-indigo-600 disabled:bg-slate-800 text-white p-3 rounded-xl"><Send size={16} /></button>
+      <textarea rows={1} value={inputQuestion} onChange={(event) => setInputQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (inputQuestion.trim()) onSubmit(event); } }} placeholder="Ask a question..." className="flex-1 bg-transparent resize-none text-sm py-2 outline-none" />
+      <button type="submit" disabled={!inputQuestion.trim()} className="bg-indigo-600 disabled:bg-slate-800 text-white p-3 rounded-xl"><Send size={16} /></button>
     </form>
   </div>;
 }

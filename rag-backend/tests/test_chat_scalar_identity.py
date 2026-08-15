@@ -39,7 +39,6 @@ async def test_chat_uses_scalar_authenticated_id_not_expired_user_orm(monkeypatc
             question="question",
             selected_document_ids=[],
         ),
-        ExpiredUser(),
         AsyncMock(),
         None,
         user_id,

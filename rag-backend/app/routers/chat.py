@@ -13,8 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.connection import get_db
 from app.config import get_settings
-from app.database.models import User
-from app.auth.security import get_current_user, get_current_user_id
+from app.auth.security import get_current_user_id
 from app.database.enums import MessageRole, MessageStatus, QueryRunStatus
 from app.database.repositories import (
     add_query_run_documents,
@@ -107,10 +106,12 @@ async def _existing_request_response(
 
 
 async def _existing_sse_response(state: dict):
+    status = state.get("status")
+    message_id = state.get("assistant_message_id") or state.get("message_id")
     yield format_sse_event(
         "message_start",
         {
-            "message_id": state.get("assistant_message_id") or state.get("message_id"),
+            "message_id": message_id,
             "client_request_id": state.get("client_request_id"),
             "query_run_id": state.get("query_run_id"),
         },
@@ -118,13 +119,22 @@ async def _existing_sse_response(state: dict):
     yield format_sse_event("retrieval_complete", state.get("retrieval", {}))
     if state.get("answer"):
         yield format_sse_event("token", {"text": state["answer"]})
-    yield format_sse_event(
-        "message_complete",
-        {
-            "status": state.get("status"),
-            "message_id": state.get("assistant_message_id") or state.get("message_id"),
-        },
-    )
+    if status == QueryRunStatus.COMPLETED.value:
+        yield format_sse_event(
+            "message_complete",
+            {"status": status, "message_id": message_id},
+        )
+    elif status == QueryRunStatus.CANCELLED.value:
+        yield format_sse_event("cancelled", {"status": status, "message_id": message_id})
+    elif status == QueryRunStatus.FAILED.value:
+        yield format_sse_event(
+            "error",
+            {
+                "code": ErrorCode.LLM_UNAVAILABLE.value,
+                "message": "The answer generation service is unavailable.",
+                "message_id": message_id,
+            },
+        )
 
 
 class _ClientDisconnected(Exception):
@@ -136,8 +146,9 @@ async def _stream_query_response(
     http_request: Request,
     db: AsyncSession,
     query_run,
-    assistant_message,
-    message,
+    query_run_id: uuid.UUID,
+    assistant_message_id: uuid.UUID,
+    client_request_id: str,
     context_package,
     retrieval_result,
 ):
@@ -159,9 +170,9 @@ async def _stream_query_response(
         yield format_sse_event(
             "message_start",
             {
-                "message_id": str(assistant_message.id),
-                "client_request_id": getattr(message, "client_request_id", None),
-                "query_run_id": str(query_run.id),
+                "message_id": str(assistant_message_id),
+                "client_request_id": client_request_id,
+                "query_run_id": str(query_run_id),
             },
         )
         yield format_sse_event("retrieval_complete", retrieval_data)
@@ -203,7 +214,7 @@ async def _stream_query_response(
         metrics.observe("LLM_latency", time.perf_counter() - llm_started)
 
         await update_message_status(
-            db, assistant_message.id, MessageStatus.COMPLETED.value, content=partial
+            db, assistant_message_id, MessageStatus.COMPLETED.value, content=partial
         )
         transition_query_run_status(query_run, QueryRunStatus.COMPLETED.value)
         await db.commit()
@@ -214,20 +225,20 @@ async def _stream_query_response(
             document_id=None,
             version_id=None,
             job_id=None,
-            message_id=str(assistant_message.id),
-            query_run_id=str(query_run.id),
+            message_id=str(assistant_message_id),
+            query_run_id=str(query_run_id),
             status=MessageStatus.COMPLETED.value,
             error_code=None,
             latency=round((time.perf_counter() - started) * 1000, 2),
         )
         yield format_sse_event(
             "message_complete",
-            {"status": MessageStatus.COMPLETED.value, "message_id": str(assistant_message.id)},
+            {"status": MessageStatus.COMPLETED.value, "message_id": str(assistant_message_id)},
         )
     except (_ClientDisconnected, asyncio.CancelledError) as exc:
         try:
             await update_message_status(
-                db, assistant_message.id, MessageStatus.CANCELLED.value, content=partial
+                db, assistant_message_id, MessageStatus.CANCELLED.value, content=partial
             )
             transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
             await db.commit()
@@ -236,14 +247,14 @@ async def _stream_query_response(
         if not isinstance(exc, asyncio.CancelledError):
             yield format_sse_event(
                 "cancelled",
-                {"status": MessageStatus.CANCELLED.value, "message_id": str(assistant_message.id)},
+                {"status": MessageStatus.CANCELLED.value, "message_id": str(assistant_message_id)},
             )
     except Exception as exc:
         if grounded:
             metrics.increment("LLM_failure_rate")
         try:
             await update_message_status(
-                db, assistant_message.id, MessageStatus.FAILED.value, content=partial
+                db, assistant_message_id, MessageStatus.FAILED.value, content=partial
             )
             transition_query_run_status(query_run, QueryRunStatus.FAILED.value)
             await db.commit()
@@ -266,7 +277,6 @@ class ChatQueryRequest(BaseModel):
 @router.post("/query")
 async def query_chat_stream(
     request: ChatQueryRequest,
-    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     http_request: Request = None,
     authenticated_user_id: uuid.UUID = Depends(get_current_user_id),
@@ -278,11 +288,7 @@ async def query_chat_stream(
     current endpoint's query work is the durable scope setup; later retrieval
     stages use the same run and terminal transition helpers.
     """
-    user_id = (
-        authenticated_user_id
-        if isinstance(authenticated_user_id, uuid.UUID)
-        else current_user.id
-    )
+    user_id = authenticated_user_id
     try:
         session_id = uuid.UUID(request.session_id)
     except ValueError as exc:
@@ -345,6 +351,9 @@ async def query_chat_stream(
             )
         return existing_state
 
+    message_id = message.id
+    client_request_id = request.client_request_id
+
     query_analysis: QueryAnalysis = classify_intent(request.question)
     if not request.selected_document_ids and not query_analysis.is_obvious_chitchat:
         raise api_error(ErrorCode.NO_DOCUMENT_SELECTED, "Please select a document first.", 400)
@@ -381,19 +390,22 @@ async def query_chat_stream(
     }
 
     query_run = None
+    query_run_id = None
     retrieval_result = None
     assistant_message = None
+    assistant_message_id = None
     context_package = None
     try:
         query_run = await create_query_run(
             db,
             session_id,
             user_id,
-            message_id=message.id,
+            message_id=message_id,
         )
+        query_run_id = query_run.id
         await add_query_run_documents(
             db,
-            query_run.id,
+            query_run_id,
             [(document.document_id, document.version_id) for document in resolved_documents],
         )
         # Establish the recoverable user/assistant pair before retrieval or
@@ -405,8 +417,9 @@ async def query_chat_stream(
             content="",
             sources={"documents": []},
             status=MessageStatus.STREAMING.value,
-            parent_message_id=message.id,
+            parent_message_id=message_id,
         )
+        assistant_message_id = assistant_message.id
         # Make the active reference visible before any retrieval/generation
         # work, including to document deletion cleanup.
         await db.commit()
@@ -424,7 +437,7 @@ async def query_chat_stream(
             conversation_context = await load_conversation_context(
                 db,
                 session_id,
-                message.id,
+                message_id,
             )
         context_package = prompt_context_builder.build(
             query_analysis=query_analysis,
@@ -432,16 +445,16 @@ async def query_chat_stream(
             recent_messages=conversation_context.recent_messages,
             retrieved_evidence=(retrieval_result.context if retrieval_result is not None else []),
             current_question=query_analysis.normalized_query,
-            current_message_id=message.id,
+            current_message_id=message_id,
         )
 
         if http_request is not None and await http_request.is_disconnected():
             await update_message_status(
-                db, assistant_message.id, MessageStatus.CANCELLED.value, content=""
+                db, assistant_message_id, MessageStatus.CANCELLED.value, content=""
             )
             transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
             await db.commit()
-            return {"status": QueryRunStatus.CANCELLED.value, "query_run_id": str(query_run.id)}
+            return {"status": QueryRunStatus.CANCELLED.value, "query_run_id": str(query_run_id)}
 
         if http_request is not None:
             assistant_message.sources = {"documents": context_package.citations}
@@ -451,8 +464,9 @@ async def query_chat_stream(
                     http_request=http_request,
                     db=db,
                     query_run=query_run,
-                    assistant_message=assistant_message,
-                    message=message,
+                    query_run_id=query_run_id,
+                    assistant_message_id=assistant_message_id,
+                    client_request_id=client_request_id,
                     context_package=context_package,
                     retrieval_result=retrieval_result,
                 ),
@@ -463,13 +477,13 @@ async def query_chat_stream(
         if retrieval_result is not None and not has_sufficient_evidence(retrieval_result):
             await update_message_status(
                 db,
-                assistant_message.id,
+                assistant_message_id,
                 MessageStatus.COMPLETED.value,
                 content=NO_GROUNDING_RESPONSE,
             )
         elif assistant_message is not None:
             await update_message_status(
-                db, assistant_message.id, MessageStatus.COMPLETED.value, content=""
+                db, assistant_message_id, MessageStatus.COMPLETED.value, content=""
             )
 
         transition_query_run_status(query_run, QueryRunStatus.COMPLETED.value)
@@ -479,7 +493,7 @@ async def query_chat_stream(
             try:
                 if assistant_message is not None:
                     await update_message_status(
-                        db, assistant_message.id, MessageStatus.CANCELLED.value,
+                        db, assistant_message_id, MessageStatus.CANCELLED.value,
                         content=getattr(assistant_message, "content", "") or "",
                     )
                 transition_query_run_status(query_run, QueryRunStatus.CANCELLED.value)
@@ -492,7 +506,7 @@ async def query_chat_stream(
             try:
                 if assistant_message is not None:
                     await update_message_status(
-                        db, assistant_message.id, MessageStatus.FAILED.value,
+                        db, assistant_message_id, MessageStatus.FAILED.value,
                         content=getattr(assistant_message, "content", "") or "",
                     )
                 transition_query_run_status(query_run, QueryRunStatus.FAILED.value)
@@ -503,8 +517,8 @@ async def query_chat_stream(
 
     response = {
         "status": getattr(query_run, "status", QueryRunStatus.COMPLETED.value),
-        "message_id": str(message.id),
-        "query_run_id": str(query_run.id),
+        "message_id": str(message_id),
+        "query_run_id": str(query_run_id),
         "retrieval_scope": {
             "user_id": str(user_id),
             "version_ids": [str(version_id) for version_id in resolved_version_ids],
@@ -530,7 +544,7 @@ async def query_chat_stream(
     }
     if assistant_message is not None:
         response["answer"] = NO_GROUNDING_RESPONSE
-        response["assistant_message_id"] = str(assistant_message.id)
+        response["assistant_message_id"] = str(assistant_message_id)
     if vector_filter is not None:
         response["qdrant_filter"] = _qdrant_model_dump(vector_filter)
     return response

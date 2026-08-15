@@ -98,7 +98,7 @@ export default function Home() {
         <ChatArea messages={chat.messages} documents={documents.documents} />
         <div className="p-4 border-t border-slate-900 space-y-2">
           <SelectedFilesBar documents={documents.documents.filter((document) => selectedDocumentIds.includes(document.document_id))} onUnbind={async (id) => setSelectedDocumentIds((previous) => previous.filter((item) => item !== id))} onDelete={deleteDocument} />
-          <ChatInputDock inputQuestion={question} setInputQuestion={setQuestion} onSubmit={(event) => { event.preventDefault(); const value = question.trim(); if (value) submitQuestion(value); }} queryLoading={chat.queryLoading} documents={documents.documents} selectedDocumentIds={selectedDocumentIds} onToggleDocument={toggleDocument} onUpload={upload} onDelete={deleteDocument} onRetry={documents.retryDocument} />
+          <ChatInputDock inputQuestion={question} setInputQuestion={setQuestion} onSubmit={(event) => { event.preventDefault(); const value = question.trim(); if (value) submitQuestion(value); }} documents={documents.documents} selectedDocumentIds={selectedDocumentIds} onToggleDocument={toggleDocument} onUpload={upload} onDelete={deleteDocument} onRetry={documents.retryDocument} />
         </div>
       </> : <div className="flex-1 flex items-center justify-center text-center p-8"><div><Bot size={42} className="mx-auto text-indigo-400 mb-4" /><h3 className="font-bold text-lg">No active workspace</h3><p className="text-sm text-slate-500 mt-2">Create or select a conversation to begin.</p></div></div>}
     </div>

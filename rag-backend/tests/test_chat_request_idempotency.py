@@ -45,8 +45,9 @@ async def test_duplicate_request_reconnects_to_existing_query_run(monkeypatch):
             question="A retry with the same ID",
             selected_document_ids=[str(uuid.uuid4())],
         ),
-        current_user,
         AsyncMock(),
+        None,
+        current_user.id,
     )
 
     assert response["status"] == QueryRunStatus.COMPLETED.value
@@ -77,8 +78,9 @@ async def test_duplicate_running_request_returns_running_state(monkeypatch):
             question="retry",
             selected_document_ids=[str(uuid.uuid4())],
         ),
-        current_user,
         AsyncMock(),
+        None,
+        current_user.id,
     )
 
     assert response["status"] == QueryRunStatus.RUNNING.value

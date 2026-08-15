@@ -49,8 +49,9 @@ async def test_zero_retrieval_evidence_creates_deterministic_completed_assistant
             question="what was revenue",
             selected_document_ids=[str(document_id)],
         ),
-        SimpleNamespace(id=user_id),
         AsyncMock(),
+        None,
+        user_id,
     )
 
     assert response["grounded"] is False

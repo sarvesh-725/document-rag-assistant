@@ -80,8 +80,9 @@ async def test_no_documents_rejects_non_chitchat_in_application_policy(monkeypat
                 question="What was revenue?",
                 selected_document_ids=[],
             ),
-            SimpleNamespace(id=uuid.uuid4()),
             AsyncMock(),
+            None,
+            uuid.uuid4(),
         )
 
     assert error.value.status_code == 400
@@ -113,8 +114,9 @@ async def test_no_documents_allows_pure_chitchat_without_retrieval(monkeypatch):
             question="Hi",
             selected_document_ids=[],
         ),
-        SimpleNamespace(id=uuid.uuid4()),
         AsyncMock(),
+        None,
+        uuid.uuid4(),
     )
 
     assert response["query_analysis"]["is_obvious_chitchat"] is True

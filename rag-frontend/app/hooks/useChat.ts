@@ -11,7 +11,7 @@ const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
 export function useChat(token: string | null, sessionId: string | null, onUnauthorized: () => void) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [queryLoading, setQueryLoading] = useState(false);
+  const [activeRequestCount, setActiveRequestCount] = useState(0);
   const messagesRef = useRef<ChatMessage[]>([]);
   const activeRequestsRef = useRef(new Map<string, { assistantMessageId?: string }>());
   const commit = (next: ChatMessage[]) => { messagesRef.current = next; setMessages(next); };
@@ -49,15 +49,17 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
       if (!merged.some((item) => item.role === 'user' && item.client_request_id === requestId) && localUser) merged.push(localUser);
     }
     merged.sort((a, b) => (a.sequence_number ?? Number.MAX_SAFE_INTEGER) - (b.sequence_number ?? Number.MAX_SAFE_INTEGER));
+    setActiveRequestCount(activeRequestsRef.current.size);
     commit(merged);
   };
 
-  const fetchHistory = useCallback(async (id: string) => {
-    if (!token) return;
+  const fetchHistory = useCallback(async (id: string): Promise<boolean> => {
+    if (!token) return false;
     const response = await apiFetch(`/api/v1/sessions/${id}/messages`, token);
-    if (response.status === 401) return onUnauthorized();
-    if (!response.ok) return commit([]);
+    if (response.status === 401) { onUnauthorized(); return false; }
+    if (!response.ok) return false;
     reconcile(mapServerMessages((await response.json()).items));
+    return true;
   }, [token, onUnauthorized]);
 
   useEffect(() => {
@@ -70,26 +72,25 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
   const updateStreamMessage = (requestId: string, updater: (message: ChatMessage) => ChatMessage) => {
     const identity = activeRequestsRef.current.get(requestId);
     const assistantMessageId = identity?.assistantMessageId;
+    if (!assistantMessageId) return;
     commit(messagesRef.current.map((item) => {
-      const isTarget = item.role === 'assistant' && (
-        (assistantMessageId !== undefined && item.message_id === assistantMessageId) ||
-        (assistantMessageId === undefined && item.client_request_id === requestId)
-      );
+      const isTarget = item.role === 'assistant' && item.message_id === assistantMessageId;
       return isTarget ? updater(item) : item;
     }));
   };
 
   const sendMessage = useCallback(async (question: string, selectedDocumentIds: string[]) => {
-    if (!token || !sessionId || queryLoading) return;
+    if (!token || !sessionId) return;
     const clientRequestId = crypto.randomUUID();
     activeRequestsRef.current.set(clientRequestId, {});
+    setActiveRequestCount(activeRequestsRef.current.size);
     const bound = [...selectedDocumentIds];
     commit([...messagesRef.current,
       { role: 'user', text: question, client_request_id: clientRequestId, status: 'PENDING', bound_document_ids: bound },
       { role: 'assistant', text: '', client_request_id: clientRequestId, status: 'STREAMING', bound_document_ids: bound, sources: [] },
     ]);
-    setQueryLoading(true);
     const body = JSON.stringify({ session_id: sessionId, client_request_id: clientRequestId, question, selected_document_ids: bound });
+    let streamStarted = false;
     try {
       let response: Response;
       try { response = await apiFetch('/api/v1/chat/query', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }); }
@@ -98,24 +99,36 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
       if (!response.ok) throw await apiError(response, 'Query failed');
       const reader = response.body?.getReader();
       const parser = new SseParser();
+      let terminalReceived = false;
+      const clearActiveRequest = () => {
+        activeRequestsRef.current.delete(clientRequestId);
+        setActiveRequestCount(activeRequestsRef.current.size);
+      };
       const handle = (event: { event: string; data: unknown }) => {
         const data = (event.data || {}) as any;
         if (event.event === 'message_start' && data.message_id) {
+          streamStarted = true;
           activeRequestsRef.current.set(clientRequestId, { assistantMessageId: data.message_id });
-          updateStreamMessage(clientRequestId, (item) => ({ ...item, message_id: data.message_id, status: 'STREAMING' }));
+          setActiveRequestCount(activeRequestsRef.current.size);
+          commit(messagesRef.current.map((item) => item.role === 'assistant' && item.client_request_id === clientRequestId
+            ? { ...item, message_id: data.message_id, status: 'STREAMING' }
+            : item));
         } else if (event.event === 'token') {
           updateStreamMessage(clientRequestId, (item) => ({ ...item, text: item.text + (data.text || '') }));
         } else if (event.event === 'source') {
           updateStreamMessage(clientRequestId, (item) => ({ ...item, sources: [...(item.sources || []), data as Source] }));
         } else if (event.event === 'message_complete') {
           updateStreamMessage(clientRequestId, (item) => ({ ...item, status: data.status || 'COMPLETED' }));
-          activeRequestsRef.current.delete(clientRequestId);
+          terminalReceived = true;
+          clearActiveRequest();
         } else if (event.event === 'cancelled') {
           updateStreamMessage(clientRequestId, (item) => ({ ...item, status: 'CANCELLED' }));
-          activeRequestsRef.current.delete(clientRequestId);
+          terminalReceived = true;
+          clearActiveRequest();
         } else if (event.event === 'error') {
           updateStreamMessage(clientRequestId, (item) => ({ ...item, status: 'FAILED', text: data.message || 'Query failed' }));
-          activeRequestsRef.current.delete(clientRequestId);
+          terminalReceived = true;
+          clearActiveRequest();
         }
       };
       if (reader) {
@@ -128,12 +141,24 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
         parser.push(decoder.decode()).forEach(handle);
         parser.finish().forEach(handle);
       }
+      // The database commit precedes message_complete. Recover canonical state
+      // when a proxy/browser drops the final SSE frame.
+      if (!terminalReceived) await fetchHistory(sessionId);
       publishCrossTabEvent({ type: 'session_changed', session_id: sessionId });
     } catch (error) {
-      updateStreamMessage(clientRequestId, (item) => ({ ...item, status: 'FAILED', text: error instanceof Error ? error.message : 'Query failed' }));
-      activeRequestsRef.current.delete(clientRequestId);
-    } finally { setQueryLoading(false); }
-  }, [token, sessionId, queryLoading, onUnauthorized]);
+      const recovered = await fetchHistory(sessionId);
+      const localAssistant = messagesRef.current.find(
+        (item) => item.role === 'assistant' && item.client_request_id === clientRequestId,
+      );
+      if (!recovered || (!streamStarted && !localAssistant?.message_id)) {
+        commit(messagesRef.current.map((item) => item.role === 'assistant' && item.client_request_id === clientRequestId
+          ? { ...item, status: 'FAILED', text: error instanceof Error ? error.message : 'Query failed' }
+          : item));
+        activeRequestsRef.current.delete(clientRequestId);
+        setActiveRequestCount(activeRequestsRef.current.size);
+      }
+    }
+  }, [token, sessionId, onUnauthorized, fetchHistory]);
 
-  return { messages, queryLoading, sendMessage, fetchHistory };
+  return { messages, queryLoading: activeRequestCount > 0, sendMessage, fetchHistory };
 }
