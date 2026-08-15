@@ -49,6 +49,7 @@ metrics = MetricsRegistry()
 for _name in (
     "upload_success_rate", "ingestion_failure_rate", "ingestion_duration",
     "retrieval_no_hit_rate", "reranker_failure_rate", "LLM_failure_rate",
+    "chat_processing_failure_rate",
     "answer_latency_p50", "answer_latency_p95", "queue_depth", "stuck_jobs",
     "embedding_latency", "rerank_latency", "LLM_latency",
 ):

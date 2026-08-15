@@ -18,6 +18,17 @@ class FakeLlm:
         yield Chunk(" two")
 
 
+class RetryLlm:
+    def __init__(self):
+        self.calls = 0
+
+    async def astream(self, _messages):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary provider failure")
+        yield Chunk("recovered")
+
+
 @pytest.mark.asyncio
 async def test_gemini_stream_uses_supplied_context_messages_and_yields_text():
     llm = FakeLlm()
@@ -31,3 +42,14 @@ async def test_gemini_stream_uses_supplied_context_messages_and_yields_text():
 
     assert result == ["one", " two"]
     assert llm.messages == messages
+
+
+@pytest.mark.asyncio
+async def test_gemini_stream_retries_only_before_first_token():
+    llm = RetryLlm()
+    streamer = GeminiAnswerStreamer(llm=llm)
+
+    result = [piece async for piece in streamer.stream([])]
+
+    assert result == ["recovered"]
+    assert llm.calls == 2

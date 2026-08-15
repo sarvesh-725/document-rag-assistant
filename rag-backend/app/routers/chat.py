@@ -32,7 +32,7 @@ from app.services.document_selection import (
 )
 from app.services.context_builder import ContextBuilder as PromptContextBuilder
 from app.services.conversation_context import ConversationContext, load_conversation_context
-from app.services.gemini_generation import GeminiAnswerStreamer
+from app.services.gemini_generation import GeminiAnswerStreamer, GeminiGenerationError
 from app.services.intent_classifier import QueryAnalysis, classify_intent
 from app.services.retrieval import (
     HybridRetriever,
@@ -91,6 +91,7 @@ async def _existing_request_response(
         "query_analysis": query_analysis,
         "assistant_message_id": str(assistant.id) if assistant else None,
         "answer": assistant.content if assistant else None,
+        "error_code": getattr(assistant, "error_code", None) if assistant else None,
         "retrieval_scope": {
             "user_id": str(user_id),
             "version_ids": [str(version_id) for version_id in version_ids],
@@ -108,6 +109,7 @@ async def _existing_request_response(
 async def _existing_sse_response(state: dict):
     status = state.get("status")
     message_id = state.get("assistant_message_id") or state.get("message_id")
+    error_code = state.get("error_code") or ErrorCode.LLM_UNAVAILABLE.value
     yield format_sse_event(
         "message_start",
         {
@@ -130,8 +132,12 @@ async def _existing_sse_response(state: dict):
         yield format_sse_event(
             "error",
             {
-                "code": ErrorCode.LLM_UNAVAILABLE.value,
-                "message": "The answer generation service is unavailable.",
+                "code": error_code,
+                "message": (
+                    "The answer generation service is unavailable."
+                    if error_code == ErrorCode.LLM_UNAVAILABLE.value
+                    else "The request could not be completed."
+                ),
                 "message_id": message_id,
             },
         )
@@ -139,6 +145,33 @@ async def _existing_sse_response(state: dict):
 
 class _ClientDisconnected(Exception):
     pass
+
+
+async def _persist_stream_failure(
+    db: AsyncSession,
+    query_run,
+    assistant_message_id: uuid.UUID,
+    partial: str,
+    error_code: str,
+    error_message: str,
+) -> None:
+    try:
+        await update_message_status(
+            db,
+            assistant_message_id,
+            MessageStatus.FAILED.value,
+            content=partial,
+            error_code=error_code,
+            error_message=error_message,
+        )
+        transition_query_run_status(query_run, QueryRunStatus.FAILED.value)
+        await db.commit()
+    except Exception:
+        logger.exception(
+            "Failed to persist terminal chat failure",
+            extra={"message_id": str(assistant_message_id)},
+        )
+        await db.rollback()
 
 
 async def _stream_query_response(
@@ -249,21 +282,49 @@ async def _stream_query_response(
                 "cancelled",
                 {"status": MessageStatus.CANCELLED.value, "message_id": str(assistant_message_id)},
             )
-    except Exception as exc:
+    except GeminiGenerationError:
         if grounded:
             metrics.increment("LLM_failure_rate")
-        try:
-            await update_message_status(
-                db, assistant_message_id, MessageStatus.FAILED.value, content=partial
-            )
-            transition_query_run_status(query_run, QueryRunStatus.FAILED.value)
-            await db.commit()
-        except Exception:
-            await db.rollback()
-        error_code = ErrorCode.LLM_UNAVAILABLE.value if grounded else ErrorCode.INGESTION_FAILED.value
+        await _persist_stream_failure(
+            db,
+            query_run,
+            assistant_message_id,
+            partial,
+            ErrorCode.LLM_UNAVAILABLE.value,
+            "The answer generation service is unavailable.",
+        )
         yield format_sse_event(
             "error",
-            {"code": error_code, "message": "The answer generation service is unavailable." if grounded else "The request could not be completed."},
+            {
+                "code": ErrorCode.LLM_UNAVAILABLE.value,
+                "message": "The answer generation service is unavailable.",
+                "message_id": str(assistant_message_id),
+            },
+        )
+    except Exception:
+        logger.exception(
+            "Chat stream processing failed",
+            extra={
+                "message_id": str(assistant_message_id),
+                "query_run_id": str(query_run_id),
+            },
+        )
+        metrics.increment("chat_processing_failure_rate")
+        await _persist_stream_failure(
+            db,
+            query_run,
+            assistant_message_id,
+            partial,
+            ErrorCode.CHAT_PROCESSING_FAILED.value,
+            "The request could not be completed.",
+        )
+        yield format_sse_event(
+            "error",
+            {
+                "code": ErrorCode.CHAT_PROCESSING_FAILED.value,
+                "message": "The request could not be completed.",
+                "message_id": str(assistant_message_id),
+            },
         )
 
 

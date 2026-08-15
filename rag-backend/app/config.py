@@ -41,6 +41,7 @@ class Settings:
         self.qdrant_url = os.getenv("QDRANT_URL", os.getenv("QDRANT_ENDPOINT"))
         self.qdrant_api_key = os.getenv("QDRANT_API_KEY")
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY"))
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
         self.cohere_api_key = os.getenv("COHERE_API_KEY")
         self.unstructured_api_key = os.getenv("UNSTRUCTURED_API_KEY")
         self.jwt_secret = os.getenv("JWT_SECRET", os.getenv("SECRET_KEY"))

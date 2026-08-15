@@ -463,11 +463,20 @@ async def get_assistant_message_for_query(
 
 
 async def update_message_status(
-    db: AsyncSession, message_id: uuid.UUID, status: str, content: str = None
+    db: AsyncSession,
+    message_id: uuid.UUID,
+    status: str,
+    content: str = None,
+    error_code: str = None,
+    error_message: str = None,
 ) -> None:
     stmt = update(Message).where(Message.id == message_id).values(status=status)
     if content is not None:
         stmt = stmt.values(content=content)
+    if error_code is not None:
+        stmt = stmt.values(error_code=error_code)
+    if error_message is not None:
+        stmt = stmt.values(error_message=error_message)
     await db.execute(stmt)
     await db.flush()
 

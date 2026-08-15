@@ -94,6 +94,6 @@ Base URL: `/api/v1`. JSON errors use `{ "detail": { "code": "...", "message": ".
 - Auth: bearer token
 - Request: `{ "session_id": string, "client_request_id": string, "question": string, "selected_document_ids": string[] }`
 - Response: typed SSE stream with `message_start`, `retrieval_complete`, `source`, `token`, `message_complete`, `error`, or `cancelled`
-- Errors: `AUTH_REQUIRED`, `SESSION_NOT_FOUND`, `DOCUMENT_NOT_READY`, `DOCUMENT_DELETING`, `NO_DOCUMENT_SELECTED`, `NO_RELEVANT_EVIDENCE`, `LLM_UNAVAILABLE`
+- Errors: `AUTH_REQUIRED`, `SESSION_NOT_FOUND`, `DOCUMENT_NOT_READY`, `DOCUMENT_DELETING`, `NO_DOCUMENT_SELECTED`, `NO_RELEVANT_EVIDENCE`, `LLM_UNAVAILABLE`, `CHAT_PROCESSING_FAILED`
 - Idempotency: unique `(session_id, client_request_id)`; duplicates reconnect to existing state and never start another generation
 - Ownership: session and every selected document are verified for the authenticated user; retrieval is version-scoped

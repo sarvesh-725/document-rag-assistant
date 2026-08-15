@@ -128,7 +128,7 @@ async def test_generation_failure_persists_partial_content_and_failed_status():
 
     async def broken_stream(_messages):
         yield "partial"
-        raise RuntimeError("Gemini failed")
+        raise chat.GeminiGenerationError("Gemini failed")
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(chat, "update_message_status", update)
@@ -158,6 +158,47 @@ async def test_generation_failure_persists_partial_content_and_failed_status():
     assert query_run.status == "FAILED"
     assert update.await_args.args[2] == "FAILED"
     assert update.await_args.kwargs["content"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_non_generation_stream_failure_uses_chat_processing_error():
+    query_run = SimpleNamespace(id=uuid.uuid4(), status="RUNNING", completed_at=None)
+    assistant = SimpleNamespace(id=uuid.uuid4())
+    request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+    db = AsyncMock()
+    update = AsyncMock(side_effect=RuntimeError("database write failed"))
+
+    async def successful_stream(_messages):
+        yield "answer"
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(chat, "update_message_status", update)
+    monkeypatch.setattr(
+        chat,
+        "gemini_answer_streamer",
+        SimpleNamespace(stream=successful_stream),
+    )
+    try:
+        frames = [
+            frame
+            async for frame in chat._stream_query_response(
+                http_request=request,
+                db=db,
+                query_run=query_run,
+                query_run_id=query_run.id,
+                assistant_message_id=assistant.id,
+                client_request_id="request-1",
+                context_package=package(),
+                retrieval_result=None,
+            )
+        ]
+    finally:
+        monkeypatch.undo()
+
+    event, data = parse_frames(frames)[-1]
+    assert event == "error"
+    assert data["code"] == "CHAT_PROCESSING_FAILED"
+    assert data["message"] == "The request could not be completed."
 
 
 @pytest.mark.asyncio
