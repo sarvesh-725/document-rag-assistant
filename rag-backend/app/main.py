@@ -36,6 +36,7 @@ import taskiq_fastapi
 from app.services.intent_classifier import train_classifier
 from app.services.rag_engine import init_qdrant
 from app.observability import metrics, request_id, structured_log, set_request_context
+from app.errors import ErrorCode, api_error
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -127,20 +128,20 @@ async def signup(request: UserSignupRequest, db: AsyncSession = Depends(get_db))
     if not username_clean:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username cannot be empty or whitespace."
+            detail={"code": ErrorCode.INVALID_REQUEST.value, "message": "Username cannot be empty or whitespace."}
         )
 
     existing_user = await get_user_by_username(db, username_clean)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
+            detail={"code": ErrorCode.INVALID_REQUEST.value, "message": "Username already registered"}
         )
 
     if len(request.password.encode('utf-8')) > 72:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password cannot be longer than 72 bytes."
+            detail={"code": ErrorCode.INVALID_REQUEST.value, "message": "Password cannot be longer than 72 bytes."}
         )
 
     hashed_password = get_password_hash(request.password)
@@ -166,13 +167,13 @@ async def login(
 
     if len(form_data.password.encode('utf-8')) > 72:
         await limiter.record_failure(username_clean, client_ip)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
+        raise api_error(ErrorCode.AUTH_REQUIRED, "Incorrect username or password", 401)
 
     if not user or not verify_password(form_data.password, user.hashed_password):
         await limiter.record_failure(username_clean, client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail={"code": ErrorCode.AUTH_REQUIRED.value, "message": "Incorrect username or password"},
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -241,14 +242,14 @@ async def delete_session(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid session ID format. Must be a valid UUID."
+            detail={"code": ErrorCode.SESSION_NOT_FOUND.value, "message": "Invalid session ID format. Must be a valid UUID."}
         )
 
     deleted = await delete_owned_session(db, session_uuid, current_user.id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or unauthorized"
+            detail={"code": ErrorCode.SESSION_NOT_FOUND.value, "message": "Session not found or unauthorized"}
         )
     
     await db.commit()
@@ -273,14 +274,14 @@ async def get_session_history(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid session ID format."
+            detail={"code": ErrorCode.SESSION_NOT_FOUND.value, "message": "Invalid session ID format."}
         )
 
     chat_session = await get_session_by_id(db, session_uuid, current_user.id)
     if not chat_session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or unauthorized"
+            detail={"code": ErrorCode.SESSION_NOT_FOUND.value, "message": "Session not found or unauthorized"}
         )
 
     messages = await get_session_messages(db, session_uuid, limit=limit, offset=offset)
@@ -303,24 +304,6 @@ async def get_session_history(
         ],
         "pagination": {"limit": limit, "offset": offset, "count": len(messages)},
     }
-
-
-# ---------------------------------------------------------------------------
-# Stubbed routes (pending Phase 2 rewrite)
-# ---------------------------------------------------------------------------
-
-@app.get("/api/v1/sessions/files")
-async def get_session_files_stub(
-    current_user: User = Depends(get_current_user),
-):
-    """
-    STUB: SessionFile has been removed. Documents are now global.
-    This endpoint will be replaced in Phase 2.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Route pending Phase 2 rewrite. SessionFile model removed. Use /api/v1/documents/global instead."
-    )
 
 
 @app.get("/")

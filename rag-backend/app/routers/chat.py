@@ -43,6 +43,7 @@ from app.services.retrieval import (
 from app.services.sse import format_sse_event
 from app.services.vector_access import owned_vector_filter
 from app.observability import metrics, structured_log
+from app.errors import ErrorCode, api_error
 
 logger = logging.getLogger("chat_router")
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
@@ -150,6 +151,7 @@ async def _stream_query_response(
         if retrieval_result is not None
         else 0,
         "context_count": len(context_package.evidence),
+        "error_code": ErrorCode.NO_RELEVANT_EVIDENCE.value if not grounded else None,
     }
     if retrieval_result is not None and not grounded:
         metrics.increment("retrieval_no_hit_rate")
@@ -247,7 +249,11 @@ async def _stream_query_response(
             await db.commit()
         except Exception:
             await db.rollback()
-        yield format_sse_event("error", {"message": str(exc)})
+        error_code = ErrorCode.LLM_UNAVAILABLE.value if grounded else ErrorCode.INGESTION_FAILED.value
+        yield format_sse_event(
+            "error",
+            {"code": error_code, "message": "The answer generation service is unavailable." if grounded else "The request could not be completed."},
+        )
 
 
 class ChatQueryRequest(BaseModel):
@@ -280,17 +286,11 @@ async def query_chat_stream(
     try:
         session_id = uuid.UUID(request.session_id)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid session_id.",
-        ) from exc
+        raise api_error(ErrorCode.SESSION_NOT_FOUND, "Invalid session_id.", 400) from exc
 
     session = await get_session_by_id(db, session_id, user_id)
     if session is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or unauthorized.",
-        )
+        raise api_error(ErrorCode.SESSION_NOT_FOUND, "Session not found or unauthorized.", 404)
 
     existing_message = await get_message_by_client_request_id(
         db, session_id, request.client_request_id
@@ -315,10 +315,7 @@ async def query_chat_stream(
         return existing_state
 
     if len(request.selected_document_ids) > get_settings().max_selected_documents_per_query:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Too many documents selected for one query.",
-        )
+        raise api_error(ErrorCode.INVALID_REQUEST, "Too many documents selected for one query.", 413)
 
     message = await create_message(
         db,
@@ -350,10 +347,7 @@ async def query_chat_stream(
 
     query_analysis: QueryAnalysis = classify_intent(request.question)
     if not request.selected_document_ids and not query_analysis.is_obvious_chitchat:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please select a document first.",
-        )
+        raise api_error(ErrorCode.NO_DOCUMENT_SELECTED, "Please select a document first.", 400)
 
     resolved_documents = []
     try:
@@ -364,10 +358,10 @@ async def query_chat_stream(
                 selected_document_ids=request.selected_document_ids,
             )
     except DocumentSelectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        code = ErrorCode.DOCUMENT_NOT_READY
+        if "deleted" in str(exc).lower():
+            code = ErrorCode.DOCUMENT_DELETING
+        raise api_error(code, str(exc), 400) from exc
 
     resolved_version_ids = [document.version_id for document in resolved_documents]
     vector_filter = (
@@ -523,6 +517,9 @@ async def query_chat_stream(
             else [],
         },
         "grounded": retrieval_result is None or has_sufficient_evidence(retrieval_result),
+        "error_code": ErrorCode.NO_RELEVANT_EVIDENCE.value
+        if retrieval_result is not None and not has_sufficient_evidence(retrieval_result)
+        else None,
         "context_package": {
             "summary": context_package.summary if context_package else "",
             "recent_messages": context_package.recent_messages if context_package else [],

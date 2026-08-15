@@ -36,10 +36,29 @@ class Settings:
     """Environment-only settings. There is intentionally no JWT secret fallback."""
 
     def __init__(self) -> None:
-        self.secret_key = os.getenv("SECRET_KEY")
-        self.algorithm = os.getenv("JWT_ALGORITHM", os.getenv("ALGORITHM", "HS256"))
-        self.access_token_expire_minutes = _positive_int("ACCESS_TOKEN_EXPIRE_MINUTES", 60)
+        self.database_url = os.getenv("DATABASE_URL")
         self.redis_url = os.getenv("REDIS_URL")
+        self.qdrant_url = os.getenv("QDRANT_URL", os.getenv("QDRANT_ENDPOINT"))
+        self.qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY"))
+        self.cohere_api_key = os.getenv("COHERE_API_KEY")
+        self.unstructured_api_key = os.getenv("UNSTRUCTURED_API_KEY")
+        self.jwt_secret = os.getenv("JWT_SECRET", os.getenv("SECRET_KEY"))
+        self.secret_key = self.jwt_secret
+        self.algorithm = os.getenv("JWT_ALGORITHM", os.getenv("ALGORITHM", "HS256"))
+        self.jwt_expiration_minutes = _positive_int(
+            "JWT_EXPIRATION_MINUTES",
+            int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")),
+        )
+        self.access_token_expire_minutes = self.jwt_expiration_minutes
+        self.frontend_origin = os.getenv("FRONTEND_ORIGIN", os.getenv("CORS_ORIGINS", ""))
+        self.storage_root = os.getenv("STORAGE_ROOT", "UPLOADS")
+        self.embedding_profile = os.getenv("EMBEDDING_PROFILE", os.getenv("EMBEDDING_PROFILE_NAME", "gemini_embedding_v1"))
+        self.qdrant_collection = os.getenv("QDRANT_COLLECTION", os.getenv("EMBEDDING_COLLECTION_NAME"))
+        self.dense_top_k = _positive_int("DENSE_TOP_K", 30)
+        self.bm25_top_k = _positive_int("BM25_TOP_K", 30)
+        self.rerank_top_k = _positive_int("RERANK_TOP_K", 10)
+        self.final_context_k = _positive_int("FINAL_CONTEXT_K", 8)
         self.login_rate_limit = _positive_int("LOGIN_RATE_LIMIT", 10)
         self.login_rate_window_seconds = _positive_int("LOGIN_RATE_WINDOW_SECONDS", 60)
         self.login_failure_window_seconds = _positive_int("LOGIN_FAILURE_WINDOW_SECONDS", 900)

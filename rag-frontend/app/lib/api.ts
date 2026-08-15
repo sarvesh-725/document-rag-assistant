@@ -9,7 +9,12 @@ export async function apiFetch(path: string, token: string, options: RequestInit
 export async function apiError(response: Response, fallback: string): Promise<Error> {
   try {
     const data = await response.json();
-    return new Error(data.detail || fallback);
+    const detail = data.detail;
+    return new Error(
+      typeof detail === 'object' && detail !== null
+        ? detail.message || fallback
+        : detail || fallback
+    );
   } catch {
     return new Error(fallback);
   }

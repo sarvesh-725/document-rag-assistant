@@ -1,0 +1,31 @@
+"""Stable API error taxonomy."""
+
+from enum import StrEnum
+
+from fastapi import HTTPException
+
+
+class ErrorCode(StrEnum):
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
+    DOCUMENT_NOT_FOUND = "DOCUMENT_NOT_FOUND"
+    DOCUMENT_NOT_READY = "DOCUMENT_NOT_READY"
+    DOCUMENT_DELETING = "DOCUMENT_DELETING"
+    DOCUMENT_NOT_OWNED = "DOCUMENT_NOT_OWNED"
+    INVALID_FILE_TYPE = "INVALID_FILE_TYPE"
+    FILE_TOO_LARGE = "FILE_TOO_LARGE"
+    INGESTION_FAILED = "INGESTION_FAILED"
+    NO_DOCUMENT_SELECTED = "NO_DOCUMENT_SELECTED"
+    NO_RELEVANT_EVIDENCE = "NO_RELEVANT_EVIDENCE"
+    CHAT_ALREADY_EXISTS = "CHAT_ALREADY_EXISTS"
+    RATE_LIMITED = "RATE_LIMITED"
+    LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
+    RERANKER_UNAVAILABLE = "RERANKER_UNAVAILABLE"
+    INVALID_REQUEST = "INVALID_REQUEST"
+
+
+def api_error(code: ErrorCode, message: str, status_code: int) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code.value, "message": message},
+    )

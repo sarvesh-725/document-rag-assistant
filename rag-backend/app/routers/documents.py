@@ -27,6 +27,7 @@ from app.database.repositories import (
 )
 from app.services.storage import LocalStorageService
 from app.observability import metrics, structured_log
+from app.errors import ErrorCode, api_error
 
 logger = logging.getLogger("documents_router")
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
@@ -46,9 +47,9 @@ def normalize_filename(filename: str) -> str:
     normalized = unicodedata.normalize("NFC", filename).strip()
     normalized = normalized.replace("\\", "/").rsplit("/", 1)[-1]
     if not normalized or normalized in {".", ".."}:
-        raise HTTPException(status_code=400, detail="A valid filename is required")
+        raise api_error(ErrorCode.INVALID_FILE_TYPE, "A valid filename is required", 400)
     if any(ord(character) < 32 for character in normalized):
-        raise HTTPException(status_code=400, detail="Filename contains invalid control characters")
+        raise api_error(ErrorCode.INVALID_FILE_TYPE, "Filename contains invalid control characters", 400)
     return normalized
 
 
@@ -60,17 +61,17 @@ def validate_upload_content(
     if expected_mime is None or content_type != expected_mime:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only PDF and plain-text files with matching MIME types are accepted",
+            detail={"code": ErrorCode.INVALID_FILE_TYPE.value, "message": "Only PDF and plain-text files with matching MIME types are accepted"},
         )
     if content and extension == ".pdf" and not content.startswith(b"%PDF-"):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="The uploaded file is not a valid PDF",
+            detail={"code": ErrorCode.INVALID_FILE_TYPE.value, "message": "The uploaded file is not a valid PDF"},
         )
     if content and extension == ".txt" and b"\x00" in content:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="The uploaded file is not valid plain text",
+            detail={"code": ErrorCode.INVALID_FILE_TYPE.value, "message": "The uploaded file is not valid plain text"},
         )
     return extension
 
@@ -84,7 +85,7 @@ async def upload_document(
 ):
     """Create a global document and enqueue ingestion without doing RAG work."""
     if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
+        raise api_error(ErrorCode.INVALID_FILE_TYPE, "No filename provided", 400)
     settings = get_settings()
     document_count = (
         await count_live_documents(db, current_user.id)
@@ -92,7 +93,7 @@ async def upload_document(
         else 0
     )
     if document_count >= settings.max_documents_per_user:
-        raise HTTPException(status_code=413, detail="Document library limit reached.")
+        raise api_error(ErrorCode.FILE_TOO_LARGE, "Document library limit reached.", 413)
 
     # Kept temporarily for frontend compatibility. It never participates in
     # authorization and no session-document association is created.
@@ -102,11 +103,11 @@ async def upload_document(
 
     content = await file.read(MAX_UPLOAD_SIZE_BYTES + 1)
     if not content:
-        raise HTTPException(status_code=400, detail="File content is empty")
+        raise api_error(ErrorCode.INVALID_FILE_TYPE, "File content is empty", 400)
     if len(content) > MAX_UPLOAD_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail="File is too large",
+            detail={"code": ErrorCode.FILE_TOO_LARGE.value, "message": "File is too large"},
         )
     validate_upload_content(normalized_filename, file.content_type, content)
 
@@ -241,10 +242,10 @@ async def retry_document(
     try:
         document_uuid = uuid.UUID(document_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid document ID format.") from exc
+        raise api_error(ErrorCode.DOCUMENT_NOT_FOUND, "Invalid document ID format.", 400) from exc
     job = await retry_document_ingestion(db, document_uuid, current_user.id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Failed ingestion job not found.")
+        raise api_error(ErrorCode.INGESTION_FAILED, "Failed ingestion job not found.", 404)
     return {"job_id": str(job.id), "status": job.status}
 
 
@@ -258,11 +259,11 @@ async def delete_document(
     try:
         doc_uuid = uuid.UUID(document_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid document ID format.") from exc
+        raise api_error(ErrorCode.DOCUMENT_NOT_FOUND, "Invalid document ID format.", 400) from exc
 
     success = await soft_delete_document(db, doc_uuid, current_user.id)
     if not success:
-        raise HTTPException(status_code=404, detail="Document not found.")
+        raise api_error(ErrorCode.DOCUMENT_NOT_FOUND, "Document not found.", 404)
 
     await create_outbox_event(
         db,

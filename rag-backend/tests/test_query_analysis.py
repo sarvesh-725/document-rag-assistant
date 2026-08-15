@@ -85,7 +85,10 @@ async def test_no_documents_rejects_non_chitchat_in_application_policy(monkeypat
         )
 
     assert error.value.status_code == 400
-    assert error.value.detail == "Please select a document first."
+    assert error.value.detail == {
+        "code": "NO_DOCUMENT_SELECTED",
+        "message": "Please select a document first.",
+    }
     classify.assert_called_once_with("What was revenue?")
     resolve.assert_not_awaited()
 

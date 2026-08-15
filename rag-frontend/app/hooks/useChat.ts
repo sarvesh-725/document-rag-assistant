@@ -67,8 +67,16 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
     if (event.type === 'session_changed' && event.session_id === sessionId) void fetchHistory(sessionId);
   });
 
-  const updateRequest = (requestId: string, updater: (message: ChatMessage) => ChatMessage) => {
-    commit(messagesRef.current.map((item) => item.client_request_id === requestId ? updater(item) : item));
+  const updateStreamMessage = (requestId: string, updater: (message: ChatMessage) => ChatMessage) => {
+    const identity = activeRequestsRef.current.get(requestId);
+    const assistantMessageId = identity?.assistantMessageId;
+    commit(messagesRef.current.map((item) => {
+      const isTarget = item.role === 'assistant' && (
+        (assistantMessageId !== undefined && item.message_id === assistantMessageId) ||
+        (assistantMessageId === undefined && item.client_request_id === requestId)
+      );
+      return isTarget ? updater(item) : item;
+    }));
   };
 
   const sendMessage = useCallback(async (question: string, selectedDocumentIds: string[]) => {
@@ -94,19 +102,19 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
         const data = (event.data || {}) as any;
         if (event.event === 'message_start' && data.message_id) {
           activeRequestsRef.current.set(clientRequestId, { assistantMessageId: data.message_id });
-          updateRequest(clientRequestId, (item) => ({ ...item, message_id: data.message_id, status: 'STREAMING' }));
+          updateStreamMessage(clientRequestId, (item) => ({ ...item, message_id: data.message_id, status: 'STREAMING' }));
         } else if (event.event === 'token') {
-          updateRequest(clientRequestId, (item) => ({ ...item, text: item.text + (data.text || '') }));
+          updateStreamMessage(clientRequestId, (item) => ({ ...item, text: item.text + (data.text || '') }));
         } else if (event.event === 'source') {
-          updateRequest(clientRequestId, (item) => ({ ...item, sources: [...(item.sources || []), data as Source] }));
+          updateStreamMessage(clientRequestId, (item) => ({ ...item, sources: [...(item.sources || []), data as Source] }));
         } else if (event.event === 'message_complete') {
-          updateRequest(clientRequestId, (item) => ({ ...item, status: data.status || 'COMPLETED' }));
+          updateStreamMessage(clientRequestId, (item) => ({ ...item, status: data.status || 'COMPLETED' }));
           activeRequestsRef.current.delete(clientRequestId);
         } else if (event.event === 'cancelled') {
-          updateRequest(clientRequestId, (item) => ({ ...item, status: 'CANCELLED' }));
+          updateStreamMessage(clientRequestId, (item) => ({ ...item, status: 'CANCELLED' }));
           activeRequestsRef.current.delete(clientRequestId);
         } else if (event.event === 'error') {
-          updateRequest(clientRequestId, (item) => ({ ...item, status: 'FAILED', text: data.message || 'Query failed' }));
+          updateStreamMessage(clientRequestId, (item) => ({ ...item, status: 'FAILED', text: data.message || 'Query failed' }));
           activeRequestsRef.current.delete(clientRequestId);
         }
       };
@@ -122,7 +130,7 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
       }
       publishCrossTabEvent({ type: 'session_changed', session_id: sessionId });
     } catch (error) {
-      updateRequest(clientRequestId, (item) => ({ ...item, status: 'FAILED', text: error instanceof Error ? error.message : 'Query failed' }));
+      updateStreamMessage(clientRequestId, (item) => ({ ...item, status: 'FAILED', text: error instanceof Error ? error.message : 'Query failed' }));
       activeRequestsRef.current.delete(clientRequestId);
     } finally { setQueryLoading(false); }
   }, [token, sessionId, queryLoading, onUnauthorized]);
