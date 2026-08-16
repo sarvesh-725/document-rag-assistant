@@ -35,18 +35,22 @@ export function useChat(token: string | null, sessionId: string | null, onUnauth
     for (const [requestId, active] of activeRequestsRef.current) {
       const localUser = messagesRef.current.find((item) => item.role === 'user' && item.client_request_id === requestId);
       const localAssistant = messagesRef.current.find((item) => item.role === 'assistant' && item.client_request_id === requestId);
-      const assistantIndex = merged.findIndex((item) => item.message_id === active.assistantMessageId || item.client_request_id === requestId && item.role === 'assistant');
+      let assistantIndex = merged.findIndex((item) => item.message_id === active.assistantMessageId || item.client_request_id === requestId && item.role === 'assistant');
       const canonicalAssistant = assistantIndex >= 0 ? merged[assistantIndex] : undefined;
       if (canonicalAssistant && TERMINAL.has(canonicalAssistant.status || '')) {
         activeRequestsRef.current.delete(requestId);
         continue;
+      }
+      if (!merged.some((item) => item.role === 'user' && item.client_request_id === requestId) && localUser) {
+        const userInsertIndex = assistantIndex >= 0 ? assistantIndex : merged.length;
+        merged.splice(userInsertIndex, 0, localUser);
+        if (assistantIndex >= userInsertIndex) assistantIndex += 1;
       }
       if (canonicalAssistant && localAssistant && (localAssistant.text.length > canonicalAssistant.text.length || canonicalAssistant.status === 'STREAMING')) {
         merged[assistantIndex] = { ...canonicalAssistant, text: localAssistant.text, status: canonicalAssistant.status || localAssistant.status };
       } else if (!canonicalAssistant && localAssistant) {
         merged.push(localAssistant);
       }
-      if (!merged.some((item) => item.role === 'user' && item.client_request_id === requestId) && localUser) merged.push(localUser);
     }
     merged.sort((a, b) => (a.sequence_number ?? Number.MAX_SAFE_INTEGER) - (b.sequence_number ?? Number.MAX_SAFE_INTEGER));
     setActiveRequestCount(activeRequestsRef.current.size);
