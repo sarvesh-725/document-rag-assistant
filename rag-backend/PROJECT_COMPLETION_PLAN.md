@@ -166,6 +166,7 @@ based on observed failures.
   "selected_documents": ["document-id"],
   "ground_truth": "...",
   "expected_sources": [{"document_id": "...", "page": 3}],
+  "reference_contexts": [],
   "conversation": []
 }
 ```

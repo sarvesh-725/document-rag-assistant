@@ -491,7 +491,7 @@ def has_sufficient_evidence(result: Optional[HybridRetrievalResult]) -> bool:
 
 
 class HybridRetriever:
-    """Orchestrate dense -> BM25 -> fusion -> expansion -> rerank -> context."""
+    """Orchestrate independent retrieval paths before context construction."""
 
     def __init__(
         self,

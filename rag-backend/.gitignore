@@ -136,3 +136,4 @@ cython_debug/
 # Local custom paths
 UPLOADS/
 chroma_db/
+evaluation/results/

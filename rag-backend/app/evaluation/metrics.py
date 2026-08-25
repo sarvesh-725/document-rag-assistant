@@ -28,3 +28,12 @@ def string_relevancy(answer: str, expected_answer: str) -> float:
     expected = set(expected_answer.lower().split())
     actual = set(answer.lower().split())
     return len(expected.intersection(actual)) / len(expected) if expected else 0.0
+
+
+def page_recall(
+    retrieved_pages: Sequence[int], expected_pages: Sequence[int]
+) -> float:
+    """Measure whether expected evidence pages were cited by the response."""
+    expected = {int(page) for page in expected_pages}
+    retrieved = {int(page) for page in retrieved_pages}
+    return len(expected.intersection(retrieved)) / len(expected) if expected else 0.0

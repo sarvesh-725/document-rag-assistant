@@ -48,3 +48,28 @@ is not claimed.
 
 For API details, see `API.md`. For the remaining implementation phases, see
 `PROJECT_COMPLETION_PLAN.md`.
+
+## RAG Evaluation
+
+Copy `evaluation/dataset.template.jsonl` to `evaluation/dataset.jsonl` and
+replace the placeholder values with verified questions, expected answers,
+document IDs, source pages, and (when available) reference context text. You
+may use another LLM to draft answers, but verify the final ground truth, page
+numbers, and reference context against the source document.
+
+Compare the thin retrieval profiles with the same dataset:
+
+```bash
+python -m app.evaluation.cli --user-id YOUR_USER_UUID --all-strategies --retrieval-only
+```
+
+To include Gemini generation and optional RAGAS metrics:
+
+```bash
+python -m app.evaluation.cli --user-id YOUR_USER_UUID --all-strategies --ragas
+```
+
+Results are written to `evaluation/results/`. The profiles run dense and BM25
+independently before RRF; `dense_only`, `hybrid`, `hybrid_parent`, and
+`hybrid_parent_rerank` are aliases for the small existing strategy set. No
+experiment registry or parameter-sweep system is used.

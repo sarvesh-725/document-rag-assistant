@@ -1,0 +1,1 @@
+{"id":"q-001","category":"direct_lookup","question":"Replace this with a question answered by the selected document.","selected_documents":["document-uuid"],"ground_truth":"Replace this with the verified expected answer.","expected_sources":[{"document_id":"document-uuid","page":1}],"reference_contexts":[],"conversation":[]}

@@ -124,6 +124,7 @@ class ContextBuilder:
             recent.append({"role": str(role or "user"), "content": str(content or "")})
         evidence: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
+        seen_citation_keys: set[tuple[Any, ...]] = set()
         for index, item in enumerate(budgeted.evidence, start=1):
             candidate = _candidate(item)
             record = {
@@ -144,11 +145,18 @@ class ContextBuilder:
                 "rerank_score": getattr(candidate, "rerank_score", None),
             }
             evidence.append(record)
-            citations.append(
-                {
+            citation_key = (
+                record["document_id"],
+                record["version_id"],
+                record["page_start"],
+                record["page_end"],
+                record["section"],
+            )
+            if citation_key not in seen_citation_keys:
+                seen_citation_keys.add(citation_key)
+                citation = {
                     key: record[key]
                     for key in (
-                        "source_id",
                         "document_id",
                         "version_id",
                         "display_name",
@@ -159,7 +167,8 @@ class ContextBuilder:
                         "section",
                     )
                 }
-            )
+                citation["source_id"] = f"S{len(citations) + 1}"
+                citations.append(citation)
         return ContextPackage(
             system_prompt=self.system_prompt,
             summary=budgeted.summary,

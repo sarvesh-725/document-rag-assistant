@@ -190,5 +190,6 @@ redis>=5.0
 sentence-transformers
 scikit-learn
 tiktoken
+ragas==0.2.15
 pytest
 pytest-asyncio
