@@ -14,13 +14,13 @@ Design:
 
 import hashlib
 import io
-import os
 import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from langchain_text_splitters import TokenTextSplitter
 from langchain_unstructured import UnstructuredLoader
+from app.config import get_settings
 
 # Versioning constants — bump when the algorithm changes.
 PARSER_VERSION = "unstructured-hi_res-v1"
@@ -103,8 +103,8 @@ def _extract_elements(file_bytes: bytes, filename: str) -> List[_ElementInfo]:
     """Parse a document via Unstructured, preserving per-element metadata."""
     loader = UnstructuredLoader(
         file=io.BytesIO(file_bytes),
-        api_key=os.environ.get("UNSTRUCTURED_API_KEY"),
-        url=os.environ.get("UNSTRUCTURED_API_URL"),
+        api_key=get_settings().unstructured_api_key,
+        url=get_settings().unstructured_api_url,
         partition_via_api=True,
         strategy="hi_res",
     )

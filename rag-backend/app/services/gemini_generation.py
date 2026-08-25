@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
+
+from app.config import get_settings
 
 logger = logging.getLogger("gemini_generation")
 
@@ -19,13 +20,13 @@ class GeminiAnswerStreamer:
     """Stream Gemini text from the already-built, sectioned prompt package."""
 
     def __init__(self, model: str | None = None, llm: Any = None):
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+        self.model = model or get_settings().gemini_model
         self.llm = llm
 
     def _get_llm(self):
         if self.llm is not None:
             return self.llm
-        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = get_settings().gemini_api_key
         if not api_key:
             raise GeminiGenerationError("A Gemini API key is required for generation")
         from langchain_google_genai import ChatGoogleGenerativeAI

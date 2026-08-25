@@ -5,12 +5,11 @@ Vector ingestion is version-scoped and idempotent. Qdrant is an index; PostgreSQ
 owns document/version state.
 """
 
-import os
 import uuid
 import logging
 import time
+import os
 from dataclasses import dataclass
-from dotenv import load_dotenv
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qdrant_models
 from qdrant_client.http.models import PointStruct
@@ -20,13 +19,14 @@ from app.services.chunking import (
     deterministic_parent_id,
 )
 from app.observability import metrics
+from app.config import get_settings
 
-load_dotenv(override=True)
+settings = get_settings()
 
 logger = logging.getLogger("rag_engine")
 
-QDRANT_ENDPOINT = os.getenv("QDRANT_ENDPOINT")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_ENDPOINT = settings.qdrant_url
+QDRANT_API_KEY = settings.qdrant_api_key
 
 
 @dataclass(frozen=True)
@@ -40,14 +40,14 @@ class EmbeddingProfile:
 
 
 def _embedding_profile_from_env() -> EmbeddingProfile:
-    name = os.getenv("EMBEDDING_PROFILE_NAME", "gemini_embedding_v1")
+    name = settings.embedding_profile
     return EmbeddingProfile(
         name=name,
-        model=os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-2-preview"),
-        dimension=int(os.getenv("EMBEDDING_DIMENSION", "3072")),
+        model=settings.embedding_model,
+        dimension=settings.embedding_dimension,
         distance=qdrant_models.Distance.COSINE,
-        version=os.getenv("EMBEDDING_PROFILE_VERSION", "1"),
-        collection_name=os.getenv("EMBEDDING_COLLECTION_NAME", f"document_chunks_{name}"),
+        version=settings.embedding_profile_version,
+        collection_name=settings.qdrant_collection,
     )
 
 
@@ -72,11 +72,13 @@ def _get_embeddings() -> GoogleGenerativeAIEmbeddings:
     if _embeddings is not None:
         return _embeddings
 
-    if not os.environ.get("GOOGLE_API_KEY"):
+    if not settings.gemini_api_key:
         raise ValueError(
-            "GOOGLE_API_KEY environment variable is not set in the environment or .env file."
+            "GEMINI_API_KEY or GOOGLE_API_KEY is not set in the environment or .env file."
         )
 
+    if not os.environ.get("GOOGLE_API_KEY"):
+        os.environ["GOOGLE_API_KEY"] = settings.gemini_api_key
     embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_PROFILE.model)
     embeddings.embed_query("test connection")
     _embeddings = embeddings

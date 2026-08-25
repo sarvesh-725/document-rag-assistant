@@ -15,6 +15,7 @@ export type Source = {
   version_id?: string;
   display_name: string;
   page?: number;
+  page_end?: number;
   section?: string;
   chunk_id?: string;
 };

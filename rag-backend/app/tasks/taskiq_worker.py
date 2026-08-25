@@ -1,13 +1,9 @@
 """
-Taskiq background worker — Phase 1 stub.
-
-The document processing task is stubbed pending Phase 2 rewrite
-with Document/DocumentVersion/IngestionJob models.
+Taskiq background worker for document ingestion, cleanup, and reconciliation.
 """
 
 import logging
 
-import os
 import uuid
 from app.broker import broker
 from app.services.storage import LocalStorageService
@@ -32,8 +28,7 @@ from app.config import get_settings
 logger = logging.getLogger("taskiq_worker")
 logging.basicConfig(level=logging.INFO)
 
-STORAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "UPLOADS"))
-storage_service = LocalStorageService(STORAGE_ROOT)
+storage_service = LocalStorageService(get_settings().storage_root)
 
 
 def _is_transient_external_failure(error: Exception) -> bool:

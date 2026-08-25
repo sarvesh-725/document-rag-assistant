@@ -96,6 +96,11 @@ async def _existing_request_response(
             "user_id": str(user_id),
             "version_ids": [str(version_id) for version_id in version_ids],
         },
+        "sources": (
+            (assistant.sources or {}).get("documents", [])
+            if assistant and isinstance(assistant.sources, dict)
+            else []
+        ),
     }
     if version_ids and (
         query_analysis is None or query_analysis.get("likely_needs_retrieval", True)
@@ -119,6 +124,18 @@ async def _existing_sse_response(state: dict):
         },
     )
     yield format_sse_event("retrieval_complete", state.get("retrieval", {}))
+    for index, source in enumerate(state.get("sources") or [], start=1):
+        source = dict(source)
+        source.setdefault("source_id", f"S{index}")
+        if source.get("page") is None and source.get("page_start") is not None:
+            source["page"] = source["page_start"]
+        if (
+            source.get("page_end") is None
+            and source.get("page_start") is not None
+            and source.get("page_start") != source.get("page_end")
+        ):
+            source["page_end"] = source["page_start"]
+        yield format_sse_event("source", source)
     if state.get("answer"):
         yield format_sse_event("token", {"text": state["answer"]})
     if status == QueryRunStatus.COMPLETED.value:
@@ -220,6 +237,11 @@ async def _stream_query_response(
             }
             if citation.get("page_start") is not None:
                 source["page"] = citation["page_start"]
+                if citation.get("page_end") not in {
+                    None,
+                    citation["page_start"],
+                }:
+                    source["page_end"] = citation["page_end"]
             yield format_sse_event("source", source)
 
         llm_started = time.perf_counter()

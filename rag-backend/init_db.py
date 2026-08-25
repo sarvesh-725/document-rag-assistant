@@ -12,6 +12,7 @@ WARNING: Destructive operation. All data will be lost.
 import asyncio
 import os
 import argparse
+import uuid
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -58,8 +59,16 @@ async def seed_test_data():
             
             # 2. Create a test document
             doc = await create_document(db, user.id, "welcome.pdf")
+            version_id = uuid.uuid4()
             version = await create_document_version(
-                db, doc.id, "hash123", "uploads/welcome.pdf", "v1", "v1", "gemini-2"
+                db,
+                doc.id,
+                "hash123",
+                f"documents/{user.id}/{doc.id}/{version_id}/original",
+                "v1",
+                "v1",
+                "gemini-2",
+                version_id=version_id,
             )
             from app.database.repositories import set_current_version
             await set_current_version(db, doc.id, version.id)
@@ -67,10 +76,14 @@ async def seed_test_data():
             # 3. Create a test session
             session = await create_session(db, user.id, "Initial Chat")
             await create_message(
-                db, session.id, "USER", "Hello, what is this system?"
+                db,
+                session.id,
+                "user",
+                "Hello, what is this system?",
+                client_request_id=str(uuid.uuid4()),
             )
             await create_message(
-                db, session.id, "ASSISTANT", "I am your RAG Document Assistant."
+                db, session.id, "assistant", "I am your RAG Document Assistant."
             )
             
             await db.commit()

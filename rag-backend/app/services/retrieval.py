@@ -8,7 +8,6 @@ Fusion combines their ranks before reranking.
 from __future__ import annotations
 
 import math
-import os
 import re
 import uuid
 import logging
@@ -24,23 +23,12 @@ from app.database.models import Document, DocumentParent, DocumentVersion
 from app.services import rag_engine
 from app.services.vector_access import owned_vector_filter
 from app.observability import metrics
+from app.config import get_settings
 
 logger = logging.getLogger("retrieval")
 
 
 TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
-
-
-def _positive_int(name: str, default: int) -> int:
-    value = int(os.getenv(name, str(default)))
-    if value <= 0:
-        raise ValueError(f"{name} must be positive")
-    return value
-
-
-def _optional_float(name: str) -> Optional[float]:
-    raw = os.getenv(name)
-    return None if raw is None or not raw.strip() else float(raw)
 
 
 @dataclass(frozen=True)
@@ -55,17 +43,15 @@ class RetrievalConfig:
 
     @classmethod
     def from_env(cls) -> "RetrievalConfig":
-        max_dense = _positive_int("MAX_DENSE_K", 100)
-        max_bm25 = _positive_int("MAX_BM25_K", 100)
-        max_rerank = _positive_int("MAX_RERANK_K", 100)
+        settings = get_settings()
         return cls(
-            dense_top_k=min(_positive_int("DENSE_TOP_K", 30), max_dense),
-            bm25_top_k=min(_positive_int("BM25_TOP_K", 30), max_bm25),
-            rrf_k=_positive_int("RRF_K", 60),
-            final_candidate_count=_positive_int("FINAL_CANDIDATE_COUNT", 8),
-            max_rerank_k=max_rerank,
-            rerank_threshold=_optional_float("RERANK_THRESHOLD"),
-            bm25_scan_limit=_positive_int("BM25_SCAN_LIMIT", 10000),
+            dense_top_k=min(settings.dense_top_k, settings.max_dense_k),
+            bm25_top_k=min(settings.bm25_top_k, settings.max_bm25_k),
+            rrf_k=settings.rrf_k,
+            final_candidate_count=settings.final_candidate_count,
+            max_rerank_k=settings.max_rerank_k,
+            rerank_threshold=settings.rerank_threshold,
+            bm25_scan_limit=settings.bm25_scan_limit,
         )
 
 
@@ -378,12 +364,13 @@ class Reranker:
 
     def __init__(self, client=None, model: Optional[str] = None):
         self.client = client
-        self.model = model or os.getenv("RERANKER_MODEL", "rerank-v3.5")
-        if self.client is None and os.getenv("COHERE_API_KEY"):
+        settings = get_settings()
+        self.model = model or settings.reranker_model
+        if self.client is None and settings.cohere_api_key:
             try:
                 import cohere
 
-                self.client = cohere.AsyncClient(api_key=os.environ["COHERE_API_KEY"])
+                self.client = cohere.AsyncClient(api_key=settings.cohere_api_key)
             except Exception:
                 self.client = None
 

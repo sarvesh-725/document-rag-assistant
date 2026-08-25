@@ -36,14 +36,20 @@ class Settings:
     """Environment-only settings. There is intentionally no JWT secret fallback."""
 
     def __init__(self) -> None:
-        self.database_url = os.getenv("DATABASE_URL")
+        self.database_url = os.getenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://postgres:postgres@localhost:5432/document_assistant",
+        )
         self.redis_url = os.getenv("REDIS_URL")
-        self.qdrant_url = os.getenv("QDRANT_URL", os.getenv("QDRANT_ENDPOINT"))
+        self.qdrant_url = os.getenv(
+            "QDRANT_URL", os.getenv("QDRANT_ENDPOINT", "http://localhost:6333")
+        )
         self.qdrant_api_key = os.getenv("QDRANT_API_KEY")
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY"))
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
         self.cohere_api_key = os.getenv("COHERE_API_KEY")
         self.unstructured_api_key = os.getenv("UNSTRUCTURED_API_KEY")
+        self.unstructured_api_url = os.getenv("UNSTRUCTURED_API_URL")
         self.jwt_secret = os.getenv("JWT_SECRET", os.getenv("SECRET_KEY"))
         self.secret_key = self.jwt_secret
         self.algorithm = os.getenv("JWT_ALGORITHM", os.getenv("ALGORITHM", "HS256"))
@@ -53,12 +59,28 @@ class Settings:
         )
         self.access_token_expire_minutes = self.jwt_expiration_minutes
         self.frontend_origin = os.getenv("FRONTEND_ORIGIN", os.getenv("CORS_ORIGINS", ""))
-        self.storage_root = os.getenv("STORAGE_ROOT", "UPLOADS")
+        configured_storage_root = os.getenv("STORAGE_ROOT", "UPLOADS")
+        self.storage_root = os.path.abspath(
+            os.path.join(str(Path(__file__).resolve().parents[1]), configured_storage_root)
+        )
         self.embedding_profile = os.getenv("EMBEDDING_PROFILE", os.getenv("EMBEDDING_PROFILE_NAME", "gemini_embedding_v1"))
-        self.qdrant_collection = os.getenv("QDRANT_COLLECTION", os.getenv("EMBEDDING_COLLECTION_NAME"))
+        self.embedding_model = os.getenv(
+            "EMBEDDING_MODEL", "models/gemini-embedding-2-preview"
+        )
+        self.embedding_dimension = _positive_int("EMBEDDING_DIMENSION", 3072)
+        self.embedding_profile_version = os.getenv("EMBEDDING_PROFILE_VERSION", "1")
+        self.qdrant_collection = os.getenv(
+            "QDRANT_COLLECTION",
+            os.getenv("EMBEDDING_COLLECTION_NAME", f"document_chunks_{self.embedding_profile}"),
+        )
         self.dense_top_k = _positive_int("DENSE_TOP_K", 30)
         self.bm25_top_k = _positive_int("BM25_TOP_K", 30)
+        self.bm25_scan_limit = _positive_int("BM25_SCAN_LIMIT", 10000)
+        self.rrf_k = _positive_int("RRF_K", 60)
+        self.final_candidate_count = _positive_int("FINAL_CANDIDATE_COUNT", 8)
         self.rerank_top_k = _positive_int("RERANK_TOP_K", 10)
+        self.reranker_model = os.getenv("RERANKER_MODEL", "rerank-v3.5")
+        self.rerank_threshold = self._optional_float("RERANK_THRESHOLD")
         self.final_context_k = _positive_int("FINAL_CONTEXT_K", 8)
         self.login_rate_limit = _positive_int("LOGIN_RATE_LIMIT", 10)
         self.login_rate_window_seconds = _positive_int("LOGIN_RATE_WINDOW_SECONDS", 60)
@@ -99,6 +121,11 @@ class Settings:
         if value <= 0:
             raise RuntimeError(f"{name} must be positive")
         return value
+
+    @staticmethod
+    def _optional_float(name: str) -> float | None:
+        raw = os.getenv(name)
+        return None if raw is None or not raw.strip() else float(raw)
 
     def require_secret_key(self) -> str:
         if not self.secret_key or len(self.secret_key) < 32:

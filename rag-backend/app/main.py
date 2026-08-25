@@ -5,15 +5,16 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.routers.documents import router as documents_router
 from app.routers.ingestion import router as ingestion_router
 from app.routers.chat import router as chat_router
-from app.database.connection import get_db, engine, Base
+from app.database.connection import get_db, engine, Base, AsyncSessionLocal
 from app.database.models import User, ChatSession, Message
 from app.database.enums import MessageRole, MessageStatus
 from app.auth.security import get_current_user, verify_password, get_password_hash, create_access_token
@@ -34,7 +35,6 @@ from app.broker import broker
 import taskiq_fastapi
 
 from app.services.intent_classifier import train_classifier
-from app.services.rag_engine import init_qdrant
 from app.observability import metrics, request_id, structured_log, set_request_context
 from app.errors import ErrorCode, api_error
 
@@ -49,7 +49,6 @@ async def lifespan(app: FastAPI):
 
     # Train the hybrid intent router in memory
     train_classifier()
-    await init_qdrant()
 
     yield
 
@@ -94,6 +93,53 @@ async def request_observability(request: Request, call_next):
 @app.get("/metrics")
 async def get_metrics():
     return metrics.snapshot()
+
+
+@app.get("/health")
+async def health():
+    """Return liveness without checking downstream dependencies."""
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+async def readiness():
+    """Report whether local persistence and retrieval dependencies are reachable."""
+    checks = {"postgres": False, "redis": False, "qdrant": False}
+
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+        checks["postgres"] = True
+    except Exception:
+        logger.exception("Readiness check failed for PostgreSQL")
+
+    redis_client = None
+    try:
+        from redis import asyncio as redis_asyncio
+
+        redis_client = redis_asyncio.from_url(get_settings().require_redis_url())
+        await redis_client.ping()
+        checks["redis"] = True
+    except Exception:
+        logger.exception("Readiness check failed for Redis")
+    finally:
+        if redis_client is not None:
+            await redis_client.aclose()
+
+    try:
+        from app.services.rag_engine import client as qdrant_client
+
+        await qdrant_client.get_collections()
+        checks["qdrant"] = True
+    except Exception:
+        logger.exception("Readiness check failed for Qdrant")
+
+    if not all(checks.values()):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "checks": checks},
+        )
+    return {"status": "ready", "checks": checks}
 
 app.add_middleware(
     CORSMiddleware,

@@ -32,14 +32,13 @@ from app.errors import ErrorCode, api_error
 logger = logging.getLogger("documents_router")
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
-STORAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "UPLOADS"))
-storage_service = LocalStorageService(STORAGE_ROOT)
+storage_service = LocalStorageService(get_settings().storage_root)
 
 MIME_BY_EXTENSION = {
     ".pdf": "application/pdf",
     ".txt": "text/plain",
 }
-MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE", os.getenv("MAX_UPLOAD_SIZE_BYTES", str(10 * 1024 * 1024))))
+MAX_UPLOAD_SIZE_BYTES = get_settings().max_file_size
 
 
 def normalize_filename(filename: str) -> str:

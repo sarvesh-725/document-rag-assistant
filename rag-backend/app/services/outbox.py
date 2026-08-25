@@ -66,6 +66,7 @@ async def publish_pending_outbox_events(
         )
         .order_by(OutboxEvent.available_at.asc(), OutboxEvent.created_at.asc())
         .limit(limit)
+        .with_for_update(skip_locked=True)
     )
     events = result.scalars().all()
     metrics.increment("queue_depth", len(events))
@@ -77,10 +78,13 @@ async def publish_pending_outbox_events(
         except Exception:
             logger.exception("Outbox dispatch failed for event %s", event.id)
             # Keep published_at NULL so this exact event remains retryable.
-            await db.commit()
             continue
 
         event.published_at = datetime.utcnow()
-        await db.commit()
         published += 1
+    if events:
+        # Keep the row locks until every selected event has been acknowledged.
+        # This prevents another publisher from dispatching the same batch while
+        # this process is waiting for the broker.
+        await db.commit()
     return published

@@ -97,12 +97,9 @@ async def cleanup_deleted_document(
         return False
 
     if storage is None:
-        import os
+        from app.config import get_settings
 
-        root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "UPLOADS")
-        )
-        storage = LocalStorageService(root)
+        storage = LocalStorageService(get_settings().storage_root)
 
     versions_result = await db.execute(
         select(DocumentVersion)

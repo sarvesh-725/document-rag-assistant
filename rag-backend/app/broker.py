@@ -1,11 +1,8 @@
-import os
 from taskiq_redis import ListQueueBroker, RedisAsyncResultBackend
 from taskiq import SimpleRetryMiddleware
-from dotenv import load_dotenv
+from app.config import get_settings
 
-load_dotenv(override=True)
-
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = get_settings().require_redis_url()
 
 result_backend = RedisAsyncResultBackend(
     redis_url=REDIS_URL,
