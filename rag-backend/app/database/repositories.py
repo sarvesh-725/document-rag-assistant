@@ -708,12 +708,14 @@ async def get_or_create_conversation_summary(
 async def create_outbox_event(
     db: AsyncSession, event_type: str, aggregate_id: uuid.UUID, payload: dict,
     event_id: Optional[uuid.UUID] = None,
+    available_at: Optional[datetime] = None,
 ) -> OutboxEvent:
     event = OutboxEvent(
         id=event_id or uuid.uuid4(),
         event_type=event_type,
         aggregate_id=aggregate_id,
         payload=payload,
+        available_at=available_at or datetime.utcnow(),
     )
     db.add(event)
     await db.flush()

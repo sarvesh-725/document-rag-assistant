@@ -22,7 +22,7 @@ from typing import List, Optional
 
 from sqlalchemy import (
     String, Integer, Float, ForeignKey, DateTime, Text, Index,
-    UniqueConstraint,
+    UniqueConstraint, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -426,9 +426,15 @@ class OutboxEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+    )
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     __table_args__ = (
-        Index("ix_outbox_unpublished", "published_at", "created_at"),
+        Index("ix_outbox_unpublished", "published_at", "available_at", "created_at"),
     )

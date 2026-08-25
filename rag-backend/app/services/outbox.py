@@ -60,8 +60,11 @@ async def publish_pending_outbox_events(
     enqueue = enqueue or enqueue_outbox_event
     result = await db.execute(
         select(OutboxEvent)
-        .where(OutboxEvent.published_at.is_(None))
-        .order_by(OutboxEvent.created_at.asc())
+        .where(
+            OutboxEvent.published_at.is_(None),
+            OutboxEvent.available_at <= datetime.utcnow(),
+        )
+        .order_by(OutboxEvent.available_at.asc(), OutboxEvent.created_at.asc())
         .limit(limit)
     )
     events = result.scalars().all()
