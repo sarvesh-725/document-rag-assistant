@@ -503,6 +503,7 @@ class HybridRetriever:
         context_builder: Optional[ContextBuilder] = None,
         evaluation_hook: Optional[RetrievalEvaluationHook] = None,
         strategy: Any = None,
+        embeddings: Any = None,
     ):
         config = RetrievalConfig.from_env()
         if strategy is not None:
@@ -512,7 +513,7 @@ class HybridRetriever:
                 bm25_top_k=min(max(0, strategy.bm25_top_k), config.bm25_top_k),
                 max_rerank_k=min(max(0, strategy.rerank_top_k), config.max_rerank_k),
             )
-        self.dense = dense or DenseRetriever(config=config)
+        self.dense = dense or DenseRetriever(embeddings=embeddings, config=config)
         self.bm25 = bm25 or BM25Retriever(config=config)
         self.fusion = fusion or RetrievalFusion(config.rrf_k)
         self.parent_expander = parent_expander or (ParentExpander() if strategy is None or strategy.parent_expansion else None)

@@ -18,6 +18,7 @@ def evaluate_with_ragas(rows: list[dict]) -> dict:
             context_recall,
             faithfulness,
         )
+        from ragas.run_config import RunConfig
     except ImportError as exc:
         raise RuntimeError(
             "Install the optional RAGAS evaluation dependencies before using --ragas"
@@ -55,6 +56,7 @@ def evaluate_with_ragas(rows: list[dict]) -> dict:
             model=settings.embedding_model,
             google_api_key=settings.gemini_api_key,
         ),
+        run_config=RunConfig(max_workers=1, max_retries=1),
     )
     if hasattr(result, "to_pandas"):
         case_results = result.to_pandas().to_dict(orient="records")

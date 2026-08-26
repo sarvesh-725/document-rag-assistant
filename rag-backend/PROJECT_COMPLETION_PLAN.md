@@ -46,7 +46,7 @@ The development workflow is intentionally limited to the following actions:
 
 - The assistant implements one phase and performs targeted verification relevant to that phase.
 - The developer reviews the phase diff and the short completion report, then pushes the successful phase to Git.
-- The developer supplies evaluation documents and test-case values before Phase 2. External LLMs may be used to draft expected answers, but the developer owns the final ground truth and source pages.
+- The developer uploads one or more evaluation documents before Phase 2. The assistant generates a small page-linked dataset; the developer may review the generated cases but does not need to hand-write them.
 - The developer does not perform the full manual application test between phases.
 - After Phase 3, the developer starts the complete system and manually tests every user-facing flow once. This is the final project validation.
 
@@ -155,8 +155,9 @@ based on observed failures.
 
 ### Work Items
 
-1. Add a simple, editable JSONL evaluation dataset template. Each case should
-   support the following fields; the developer supplies the actual values:
+1. Add a simple, editable JSONL evaluation dataset template and an automatic
+   generator. The developer supplies documents only; generated cases should
+   support the following fields:
 
 ```json
 {
@@ -171,9 +172,11 @@ based on observed failures.
 }
 ```
 
-   Use approximately 25-40 cases across direct lookup, multi-hop,
-   cross-section, table/list extraction, ambiguous, no-answer, and multi-turn
-   questions. `conversation` is only needed for multi-turn cases.
+   Generate 5-20 cases, with 8-10 as the default, across direct lookup,
+   multi-hop, cross-section, table/list extraction, ambiguous, no-answer, and
+   multi-turn questions when the document evidence supports them. Generate in
+   batches of at most 5 requests and apply a delay between Gemini requests.
+   `conversation` is only needed for multi-turn cases.
 2. Complete the RAGAS evaluation path for context precision, context recall,
    faithfulness, and response relevancy. Store dataset, strategy configuration,
    raw outputs, and summary results so runs are repeatable.
@@ -231,16 +234,17 @@ low answer relevance -> prompt structure and conversation context
    Fix preservation and presentation of metadata already available from the
    parser only. Do not redesign parsing or add a separate document-layout
    extraction system.
-11. Include citation cases in the developer-provided dataset, including known
-    page numbers for PDFs containing paragraphs, tables, and multi-page content.
+11. Include citation cases in the generated dataset, using only page numbers
+    present in parser metadata for PDFs containing paragraphs, tables, and
+    multi-page content. Reject generated sources that cannot be validated.
 
 ### Completion Criteria
 
-- RAGAS produces repeatable metrics from a committed sample dataset.
+- RAGAS produces repeatable metrics from a saved, generated sample dataset.
 - The worst retrieval and generation failures have been manually inspected.
 - Candidate limits and no-evidence behavior are tested.
 - At least one targeted improvement is justified by evaluation results.
-- Dense-only versus parallel hybrid strategies can be compared without code edits.
+- Dense-only versus parallel hybrid strategies can be compared without code edits or regenerating the dataset.
 - Returned citations match the evidence page/page range in the evaluation data.
 - The README reports known quality and scalability tradeoffs honestly.
 
@@ -258,11 +262,11 @@ the model is simply accurate.
 
 ### Developer Gate
 
-Before Phase 2 begins, the developer adds the evaluation questions, expected
-answers, document identifiers, and expected page numbers. After the evaluation
-runner and strategy comparison work, the developer reviews the results, chooses
-the preferred strategy for this application, and pushes Phase 2. The developer
-does not need to generate the dataset through this assistant.
+Before Phase 2 begins, the developer uploads one or more documents and waits for
+them to become READY. The automatic evaluator generates and saves the cases,
+then compares retrieval profiles. The developer reviews the comparison and the
+selected answer/RAGAS result, then pushes Phase 2. The developer does not need
+to generate or hand-write the dataset.
 
 ## Phase 3: Product Contract and Interview Polish
 
@@ -335,7 +339,7 @@ following are true:
 - Dense retrieval, BM25, fusion, parent expansion, reranking, and grounding behavior are demonstrated.
 - Dense and BM25 retrieval operate as independent paths before rank fusion.
 - RAGAS produces metrics and the main failures have been reviewed.
-- Strategy profiles can be compared using developer-supplied evaluation data.
+- Strategy profiles can be compared using one saved generated dataset.
 - Citation pages/page ranges are correct for paginated documents, with honest metadata for page-less documents.
 - Health/readiness, configuration, secrets, and database migration behavior are addressed.
 - Versioning and summary terminology are accurate.

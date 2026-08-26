@@ -32,12 +32,20 @@ class EvaluationSample:
                 expected_document_ids.append(str(document_id))
             if source.get("page") is not None:
                 page = int(source["page"])
-                if page not in expected_pages:
-                    expected_pages.append(page)
+                page_end = int(source.get("page_end", page))
+                expected_pages.extend(
+                    candidate
+                    for candidate in range(page, page_end + 1)
+                    if candidate not in expected_pages
+                )
             if source.get("page_start") is not None:
                 page = int(source["page_start"])
-                if page not in expected_pages:
-                    expected_pages.append(page)
+                page_end = int(source.get("page_end", page))
+                expected_pages.extend(
+                    candidate
+                    for candidate in range(page, page_end + 1)
+                    if candidate not in expected_pages
+                )
         selected_document_ids = list(
             value.get("selected_documents", value.get("selected_document_ids", []))
         )

@@ -17,6 +17,7 @@ RUN grep -v '^python-magic-bin' requirements.txt > /tmp/requirements.txt \
 
 COPY app ./app
 COPY alembic ./alembic
+COPY evaluation ./evaluation
 COPY alembic.ini init_db.py API.md ./
 
 EXPOSE 8000

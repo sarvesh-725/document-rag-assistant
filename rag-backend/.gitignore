@@ -137,3 +137,4 @@ cython_debug/
 UPLOADS/
 chroma_db/
 evaluation/results/
+evaluation/generated_dataset.jsonl

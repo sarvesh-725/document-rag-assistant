@@ -5,4 +5,5 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 UPLOADS/
+evaluation/results/
 .git/

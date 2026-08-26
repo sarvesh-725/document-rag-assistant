@@ -51,6 +51,8 @@ For API details, see `API.md`. For the remaining implementation phases, see
 
 ## RAG Evaluation
 
+For the complete upload-to-results workflow, see `EVALUATION_GUIDE.md`.
+
 Copy `evaluation/dataset.template.jsonl` to `evaluation/dataset.jsonl` and
 replace the placeholder values with verified questions, expected answers,
 document IDs, source pages, and (when available) reference context text. You

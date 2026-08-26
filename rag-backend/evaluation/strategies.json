@@ -1,0 +1,26 @@
+{
+  "dense_only": {
+    "dense_top_k": 30,
+    "bm25_top_k": 0,
+    "reranker": null,
+    "parent_expansion": false
+  },
+  "hybrid": {
+    "dense_top_k": 30,
+    "bm25_top_k": 30,
+    "reranker": null,
+    "parent_expansion": false
+  },
+  "hybrid_parent": {
+    "dense_top_k": 30,
+    "bm25_top_k": 30,
+    "reranker": null,
+    "parent_expansion": true
+  },
+  "hybrid_parent_rerank": {
+    "dense_top_k": 30,
+    "bm25_top_k": 30,
+    "reranker": "cohere",
+    "parent_expansion": true
+  }
+}
