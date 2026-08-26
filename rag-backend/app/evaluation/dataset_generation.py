@@ -243,8 +243,8 @@ async def generate_dataset(
     settings = get_settings()
     requested_count = sample_count or settings.evaluation_sample_count
     requested_batch_size = batch_size or settings.evaluation_batch_size
-    if not 5 <= requested_count <= 20:
-        raise ValueError("sample_count must be between 5 and 20")
+    if not 1 <= requested_count <= 20:
+        raise ValueError("sample_count must be between 1 and 20")
     if not 1 <= requested_batch_size <= 5:
         raise ValueError("batch_size must be between 1 and 5")
     contexts = await _load_source_contexts(db, user_id, document_ids)

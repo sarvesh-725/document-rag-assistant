@@ -42,6 +42,16 @@ def _get_model():
     os.environ.setdefault("TORCH_HOME", str(cache_root / "torch"))
     os.environ.setdefault("HF_HOME", str(cache_root / "huggingface"))
     try:
+        import sentence_transformers
+
+        version = tuple(
+            int(part) for part in sentence_transformers.__version__.split(".")[:2]
+        )
+        if version < (3, 0):
+            raise RuntimeError(
+                "Installed sentence-transformers is obsolete; use the hashing encoder"
+            )
+
         from sentence_transformers import SentenceTransformer
 
         signature = inspect.signature(SentenceTransformer)
@@ -49,10 +59,10 @@ def _get_model():
         if "token" in signature.parameters and hf_token:
             kwargs["token"] = hf_token
         if "backend" in signature.parameters:
-            kwargs["backend"] = "onnx"
+            kwargs["backend"] = "torch"
         _model = SentenceTransformer("all-MiniLM-L6-v2", **kwargs)
     except Exception as exc:
-        logger.warning("Semantic encoder unavailable; using local hashing fallback: %s", exc)
+        logger.info("Using local hashing intent encoder: %s", exc)
         _model = _HashingEncoder()
     return _model
 

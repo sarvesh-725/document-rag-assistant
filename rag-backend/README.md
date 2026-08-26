@@ -3,14 +3,15 @@
 ## Local Startup
 
 1. Copy `.env.example` to `.env` and set the required secret and provider values.
-2. Start the backend services from this directory:
+2. Start only the infrastructure containers from this directory:
 
 ```bash
-docker compose up --build
+docker compose up postgres redis qdrant
 ```
 
-This starts PostgreSQL, Redis, Qdrant, the FastAPI API, the Taskiq worker, and
-the outbox publisher. The API applies Alembic migrations before it starts.
+Run FastAPI, the Taskiq worker, and the outbox publisher directly from the
+project virtual environment in separate terminals. Exact commands are in
+`RUN_AND_EVALUATE.md`. This avoids building the large Python image three times.
 
 Start the Next.js frontend separately from `rag-frontend`:
 
@@ -51,27 +52,13 @@ For API details, see `API.md`. For the remaining implementation phases, see
 
 ## RAG Evaluation
 
-For the complete upload-to-results workflow, see `EVALUATION_GUIDE.md`.
+For the complete upload-to-results workflow, package migration, rate limits,
+manual reset steps, and LangSmith setup, see `EVALUATION_GUIDE.md`.
 
-Copy `evaluation/dataset.template.jsonl` to `evaluation/dataset.jsonl` and
-replace the placeholder values with verified questions, expected answers,
-document IDs, source pages, and (when available) reference context text. You
-may use another LLM to draft answers, but verify the final ground truth, page
-numbers, and reference context against the source document.
-
-Compare the thin retrieval profiles with the same dataset:
-
-```bash
-python -m app.evaluation.cli --user-id YOUR_USER_UUID --all-strategies --retrieval-only
-```
-
-To include Gemini generation and optional RAGAS metrics:
-
-```bash
-python -m app.evaluation.cli --user-id YOUR_USER_UUID --all-strategies --ragas
-```
-
-Results are written to `evaluation/results/`. The profiles run dense and BM25
-independently before RRF; `dense_only`, `hybrid`, `hybrid_parent`, and
-`hybrid_parent_rerank` are aliases for the small existing strategy set. No
-experiment registry or parameter-sweep system is used.
+The evaluator accepts a verified JSONL dataset or generates three page-aware
+cases from two or three uploaded READY PDF/TXT documents. It compares the
+existing retrieval profiles, bounds answer generation, and uploads repeatable
+experiments to LangSmith. Results are also written to
+`evaluation/results/`. The profiles run dense and BM25 independently before
+RRF; `dense_only`, `hybrid`, `hybrid_parent`, and `hybrid_parent_rerank` remain
+the existing strategy set.

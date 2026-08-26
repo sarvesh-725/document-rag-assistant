@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from dataclasses import field
+import hashlib
 import json
 from pathlib import Path
 
@@ -21,6 +22,7 @@ class EvaluationSample:
 
     @classmethod
     def from_dict(cls, value: dict) -> "EvaluationSample":
+        question = value["question"]
         expected_sources = list(value.get("expected_sources", []))
         expected_document_ids = list(value.get("expected_document_ids", []))
         expected_pages = [int(page) for page in value.get("expected_pages", [])]
@@ -52,12 +54,16 @@ class EvaluationSample:
         if not selected_document_ids:
             selected_document_ids = list(expected_document_ids)
         return cls(
-            question=value["question"],
+            question=question,
             expected_answer=value.get("ground_truth", value.get("expected_answer", "")),
             expected_document_ids=expected_document_ids,
             expected_pages=expected_pages,
             query_type=value.get("category", value.get("query_type", "factual")),
-            sample_id=value.get("id", ""),
+            sample_id=str(
+                value.get("id")
+                or "q-"
+                + hashlib.sha256(question.encode("utf-8")).hexdigest()[:12]
+            ),
             selected_document_ids=selected_document_ids,
             expected_sources=expected_sources,
             reference_contexts=list(value.get("reference_contexts", [])),

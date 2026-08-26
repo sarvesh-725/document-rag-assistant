@@ -187,9 +187,8 @@ taskiq
 taskiq-redis
 taskiq-fastapi
 redis>=5.0
-sentence-transformers
+sentence-transformers>=3.0,<6.0
 scikit-learn
 tiktoken
-ragas==0.2.15
 pytest
 pytest-asyncio

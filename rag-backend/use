@@ -398,5 +398,5 @@ Additionally, I wanted to add:
 1. hybrid search (BM 2.5 along with our current vector search), 
 2. considering chronological context ordering also,
 3. Keeping the summary of chat history along with all the existing content(last 4 messages+query(modified or original)) in prompt template.
-4. Evaluation layer (keeping track of accuracy, latency, and other common metrics, etc.) using ragas and should be able to change various strategies and techniques in RAG pipeline to get the best one.
+4. Evaluation layer (keeping track of accuracy, latency, and other common metrics, etc.) using LangSmith. It should support a small generated or supplied dataset, repeatable experiments over different RAG strategies, and rate-safe batching/reset for new documents.
 5. Add a feature to adjust the number of last messages to be included in the prompt template.

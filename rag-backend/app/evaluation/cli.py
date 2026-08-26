@@ -21,7 +21,7 @@ from app.evaluation.metrics import (
     reciprocal_rank,
     string_relevancy,
 )
-from app.evaluation.ragas_adapter import evaluate_with_ragas
+from app.evaluation.langsmith_adapter import evaluate_with_langsmith
 from app.evaluation.strategies import PROFILE_NAMES, RAGStrategy, get_strategy
 from app.services.context_builder import ContextBuilder as PromptContextBuilder
 from app.services.document_selection import resolve_selected_documents
@@ -101,9 +101,11 @@ async def _run_strategy(
     user_id: uuid.UUID,
     *,
     retrieval_only: bool,
-    use_ragas: bool,
+    use_langsmith: bool,
     embeddings: QueryEmbeddingCache | None = None,
-    ragas_limit: int | None = None,
+    langsmith_limit: int | None = None,
+    langsmith_dataset: str | None = None,
+    reset: bool = False,
     request_delay: float = 0.0,
 ) -> dict:
     retriever = HybridRetriever(strategy=strategy, embeddings=embeddings)
@@ -201,16 +203,21 @@ async def _run_strategy(
             if request_delay and sample_index + 1 < len(samples) and not retrieval_only:
                 await asyncio.sleep(request_delay)
 
-    ragas_output = {"cases": [], "summary": {}}
-    if use_ragas:
-        ragas_output = evaluate_with_ragas(cases[:ragas_limit] if ragas_limit else cases)
-        for case, ragas_result in zip(cases, ragas_output["cases"]):
-            case["ragas"] = ragas_result
+    langsmith_output = {"cases": [], "summary": {}}
+    if use_langsmith:
+        langsmith_output = await evaluate_with_langsmith(
+            cases[:langsmith_limit] if langsmith_limit else cases,
+            strategy_name=strategy.name,
+            dataset_name=langsmith_dataset,
+            reset=reset,
+        )
+        for case, langsmith_result in zip(cases, langsmith_output["cases"]):
+            case["langsmith"] = langsmith_result
 
     return {
         "strategy": strategy.__dict__,
         "summary": _summary(cases),
-        "ragas_summary": ragas_output["summary"] if use_ragas else {},
+        "langsmith": langsmith_output,
         "cases": cases,
     }
 
@@ -218,6 +225,8 @@ async def _run_strategy(
 async def _run(args: argparse.Namespace) -> None:
     user_id = uuid.UUID(args.user_id)
     settings = get_settings()
+    if args.case_limit is not None and not 1 <= args.case_limit <= 10:
+        raise ValueError("case_limit must be between 1 and 10")
     generated_dataset = False
     if args.auto:
         document_ids = [uuid.UUID(value) for value in args.document_id]
@@ -242,26 +251,33 @@ async def _run(args: argparse.Namespace) -> None:
     if not samples:
         raise ValueError(f"Evaluation dataset is empty: {args.dataset}")
     names = list(PROFILE_NAMES) if args.all_strategies or args.auto else [args.strategy]
-    if args.ragas and args.retrieval_only:
-        raise ValueError("--ragas requires generated answers; remove --retrieval-only")
+    if args.langsmith and args.retrieval_only:
+        raise ValueError("--langsmith requires generated answers; remove --retrieval-only")
     if args.auto and args.retrieval_only:
         raise ValueError("--auto includes the selected strategy answer evaluation; remove --retrieval-only")
-    if args.ragas and args.all_strategies and not args.auto:
+    if args.langsmith and args.all_strategies and not args.auto:
         raise ValueError(
-            "Run retrieval-only comparison first, then run --ragas for the selected strategy"
+            "Run retrieval-only comparison first, then run --langsmith for the selected strategy"
         )
 
     results = {}
     embedding_cache = QueryEmbeddingCache()
     try:
         for name in names:
+            evaluation_samples = (
+                samples
+                if args.retrieval_only or args.auto
+                else samples[: args.case_limit or settings.evaluation_case_limit]
+            )
             results[name] = await _run_strategy(
-                samples,
+                evaluation_samples,
                 get_strategy(name),
                 user_id,
-                retrieval_only=args.retrieval_only,
-                use_ragas=args.ragas and not args.auto,
+                retrieval_only=args.retrieval_only or args.auto,
+                use_langsmith=args.langsmith and not args.auto,
                 embeddings=embedding_cache,
+                langsmith_dataset=args.langsmith_dataset,
+                reset=args.reset,
                 request_delay=settings.evaluation_request_delay_seconds,
             )
         if args.auto:
@@ -274,13 +290,15 @@ async def _run(args: argparse.Namespace) -> None:
                 ),
             )
             selected = await _run_strategy(
-                samples,
+                samples[: args.case_limit or settings.evaluation_case_limit],
                 get_strategy(best_name),
                 user_id,
                 retrieval_only=False,
-                use_ragas=args.ragas,
+                use_langsmith=args.langsmith,
                 embeddings=embedding_cache,
-                ragas_limit=args.ragas_limit or settings.evaluation_ragas_case_limit,
+                langsmith_limit=args.case_limit or settings.evaluation_case_limit,
+                langsmith_dataset=args.langsmith_dataset,
+                reset=args.reset,
                 request_delay=settings.evaluation_request_delay_seconds,
             )
             results = {
@@ -316,9 +334,15 @@ async def _run(args: argparse.Namespace) -> None:
             "selected_evaluation: "
             + json.dumps(results["selected_evaluation"]["summary"], sort_keys=True)
         )
+        langsmith = results["selected_evaluation"].get("langsmith", {})
+        if langsmith.get("experiment_url"):
+            print(f"langsmith_experiment: {langsmith['experiment_url']}")
     else:
         for name, result in results.items():
             print(f"{name}: {json.dumps(result['summary'], sort_keys=True)}")
+            langsmith = result.get("langsmith", {})
+            if langsmith.get("experiment_url"):
+                print(f"{name}_langsmith_experiment: {langsmith['experiment_url']}")
 
 
 def main() -> None:
@@ -332,9 +356,11 @@ def main() -> None:
     parser.add_argument("--generated-dataset", default="evaluation/generated_dataset.jsonl")
     parser.add_argument("--sample-count", type=int)
     parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--ragas-limit", type=int)
+    parser.add_argument("--case-limit", type=int)
     parser.add_argument("--retrieval-only", action="store_true")
-    parser.add_argument("--ragas", action="store_true")
+    parser.add_argument("--langsmith", action="store_true")
+    parser.add_argument("--langsmith-dataset")
+    parser.add_argument("--reset", action="store_true")
     parser.add_argument("--output-dir", default="evaluation/results")
     args = parser.parse_args()
     asyncio.run(_run(args))

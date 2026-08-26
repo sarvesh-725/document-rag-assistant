@@ -108,19 +108,26 @@ class Settings:
         self.max_context_tokens = _positive_int("MAX_CONTEXT_TOKENS", 32768)
         self.max_output_tokens = _positive_int("MAX_OUTPUT_TOKENS", 4096)
         self.evaluation_sample_count = self._bounded_int(
-            "EVALUATION_SAMPLE_COUNT", 5, minimum=5, maximum=20
+            "EVALUATION_SAMPLE_COUNT", 3, minimum=1, maximum=20
         )
         self.evaluation_batch_size = self._bounded_int(
-            "EVALUATION_BATCH_SIZE", 5, minimum=1, maximum=5
+            "EVALUATION_BATCH_SIZE", 3, minimum=1, maximum=5
         )
         self.evaluation_request_delay_seconds = self._positive_float(
             "EVALUATION_REQUEST_DELAY_SECONDS", 5.0
         )
-        self.evaluation_ragas_case_limit = self._bounded_int(
-            "EVALUATION_RAGAS_CASE_LIMIT", 5, minimum=1, maximum=10
+        self.evaluation_case_limit = self._bounded_int(
+            "EVALUATION_CASE_LIMIT", 3, minimum=1, maximum=10
         )
         self.evaluation_context_chars = _positive_int(
             "EVALUATION_CONTEXT_CHARS", 60000
+        )
+        self.langsmith_api_key = os.getenv("LANGSMITH_API_KEY")
+        self.langsmith_endpoint = os.getenv(
+            "LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"
+        )
+        self.langsmith_project = os.getenv(
+            "LANGSMITH_PROJECT", "document-assistant-evaluation"
         )
 
     @staticmethod
