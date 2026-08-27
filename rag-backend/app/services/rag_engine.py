@@ -54,7 +54,11 @@ def _embedding_profile_from_env() -> EmbeddingProfile:
 EMBEDDING_PROFILE = _embedding_profile_from_env()
 QDRANT_COLLECTION_NAME = EMBEDDING_PROFILE.collection_name
 
-client = AsyncQdrantClient(url=QDRANT_ENDPOINT, api_key=QDRANT_API_KEY)
+client = AsyncQdrantClient(
+    url=QDRANT_ENDPOINT,
+    api_key=QDRANT_API_KEY,
+    timeout=settings.qdrant_timeout_seconds,
+)
 
 _embeddings = None
 _qdrant_initialized = False

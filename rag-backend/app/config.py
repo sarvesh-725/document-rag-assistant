@@ -45,6 +45,7 @@ class Settings:
             "QDRANT_URL", os.getenv("QDRANT_ENDPOINT", "http://localhost:6333")
         )
         self.qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        self.qdrant_timeout_seconds = _positive_int("QDRANT_TIMEOUT_SECONDS", 30)
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY"))
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
         self.cohere_api_key = os.getenv("COHERE_API_KEY")
