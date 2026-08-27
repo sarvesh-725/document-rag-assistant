@@ -13,6 +13,7 @@ def test_retrieval_metrics_have_expected_values():
     assert recall_at_k(retrieved, expected, 2) == 0.5
     assert reciprocal_rank(retrieved, expected) == 0.5
     assert ndcg_at_k(retrieved, expected, 3) > 0
+    assert ndcg_at_k(retrieved, expected, 3) <= 1.0
 
 
 def test_strategy_presets_are_descriptions_not_duplicate_pipelines():

@@ -107,10 +107,38 @@ def test_named_dataset_rejects_changed_cases_without_reset():
         _ensure_dataset(client, "evaluation", rows, reset=False)
 
 
+def test_reset_deletes_existing_dataset_before_recreating_examples():
+    rows = [{"id": "q-001", "question": "What?", "reference": "This"}]
+    client = FakeLangSmithClient(SimpleNamespace(metadata={"source_fingerprint": "old"}))
+
+    _ensure_dataset(client, "evaluation", rows, reset=True)
+
+    assert client.deleted is True
+    assert client.dataset.id == "dataset-id"
+
+
+def test_missing_named_dataset_is_created():
+    rows = [{"id": "q-001", "question": "What?", "reference": "This"}]
+
+    class LangSmithNotFoundError(Exception):
+        pass
+
+    class MissingClient(FakeLangSmithClient):
+        def read_dataset(self, *, dataset_name):
+            raise LangSmithNotFoundError()
+
+    client = MissingClient(None)
+
+    _ensure_dataset(client, "new-evaluation", rows, reset=False)
+
+    assert client.dataset.id == "dataset-id"
+
+
 class FakeLangSmithClient:
     def __init__(self, dataset, dataset_id="dataset-id"):
         self.dataset = dataset
         self.dataset_id = dataset_id
+        self.deleted = False
 
     def has_dataset(self, *, dataset_name):
         return self.dataset is not None
@@ -122,5 +150,15 @@ class FakeLangSmithClient:
         self.dataset = SimpleNamespace(metadata=kwargs.get("metadata", {}), id=self.dataset_id)
         return self.dataset
 
+    def delete_dataset(self, *, dataset_name):
+        self.deleted = True
+        self.dataset = None
+
     def create_examples(self, **kwargs):
+        return None
+
+    def list_examples(self, *, dataset_id=None, example_ids=None):
+        return []
+
+    def update_example(self, *args, **kwargs):
         return None

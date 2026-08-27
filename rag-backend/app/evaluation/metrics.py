@@ -33,11 +33,12 @@ def reciprocal_rank(retrieved: Sequence[str], expected: Sequence[str]) -> float:
 
 def ndcg_at_k(retrieved: Sequence[str], expected: Sequence[str], k: int) -> float:
     target = set(expected)
-    dcg = sum(
-        1.0 / math.log2(index + 1)
-        for index, item in enumerate(retrieved[:k], 1)
-        if item in target
-    )
+    seen: set[str] = set()
+    dcg = 0.0
+    for index, item in enumerate(retrieved[:k], 1):
+        if item in target and item not in seen:
+            seen.add(item)
+            dcg += 1.0 / math.log2(index + 1)
     ideal = sum(
         1.0 / math.log2(index + 1)
         for index in range(1, min(k, len(target)) + 1)

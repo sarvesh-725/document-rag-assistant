@@ -142,35 +142,75 @@ def _dataset_name(rows: Sequence[dict[str, Any]], requested_name: str | None) ->
     return f"document-assistant-evaluation-{_fingerprint(rows)[:12]}"
 
 
-def _example_id(row: dict[str, Any]) -> str:
-    value = f"{row.get('id', '')}:{row.get('question', '')}"
+def _example_id(row: dict[str, Any], dataset_id: Any) -> str:
+    value = f"{dataset_id}:{row.get('id', '')}:{row.get('question', '')}"
     return str(uuid.uuid5(uuid.NAMESPACE_URL, value))
+
+
+def _read_dataset_if_present(client: Any, name: str) -> Any | None:
+    try:
+        return client.read_dataset(dataset_name=name)
+    except Exception as exc:
+        if exc.__class__.__name__ == "LangSmithNotFoundError":
+            return None
+        response = getattr(exc, "response", None)
+        status_code = getattr(exc, "status_code", None) or getattr(
+            response, "status_code", None
+        )
+        if status_code == 404:
+            return None
+        raise
+
+
+def _list_examples_if_present(client: Any, **kwargs: Any) -> list[Any]:
+    try:
+        return list(client.list_examples(**kwargs))
+    except Exception as exc:
+        if exc.__class__.__name__ == "LangSmithNotFoundError":
+            return []
+        response = getattr(exc, "response", None)
+        status_code = getattr(exc, "status_code", None) or getattr(
+            response, "status_code", None
+        )
+        if status_code == 404:
+            return []
+        raise
 
 
 def _ensure_dataset(client: Any, name: str, rows: list[dict[str, Any]], reset: bool) -> Any:
     fingerprint = _fingerprint(rows)
-    if client.has_dataset(dataset_name=name):
-        dataset = client.read_dataset(dataset_name=name)
-        metadata = getattr(dataset, "metadata", {}) or {}
-        if reset:
+    dataset = None
+    if reset:
+        # The regional API can report stale dataset-existence results, so reset
+        # attempts the delete directly.
+        try:
             client.delete_dataset(dataset_name=name)
-        elif metadata.get("source_fingerprint") == fingerprint:
-            return dataset
-        else:
-            raise RuntimeError(
-                f"LangSmith dataset '{name}' contains different cases; "
-                "use --reset or choose another --langsmith-dataset name"
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            status_code = getattr(exc, "status_code", None) or getattr(
+                response, "status_code", None
             )
+            if status_code != 404:
+                raise
+    else:
+        dataset = _read_dataset_if_present(client, name)
+        if dataset is not None:
+            metadata = getattr(dataset, "metadata", {}) or {}
+            if metadata.get("source_fingerprint") != fingerprint:
+                raise RuntimeError(
+                    f"LangSmith dataset '{name}' contains different cases; "
+                    "use --reset or choose another --langsmith-dataset name"
+                )
 
-    dataset = client.create_dataset(
-        name,
-        description="Document Assistant evaluation cases",
-        metadata={"source_fingerprint": fingerprint, "source": "document-assistant"},
-    )
-    client.create_examples(
-        dataset_name=name,
-        inputs=[{"case_id": row["id"], "question": row["question"]} for row in rows],
-        outputs=[
+    if dataset is None:
+        dataset = client.create_dataset(
+            name,
+            description="Document Assistant evaluation cases",
+            metadata={"source_fingerprint": fingerprint, "source": "document-assistant"},
+        )
+    expected = {
+        _example_id(row, dataset.id): (
+            {"case_id": row["id"], "question": row["question"]},
             {
                 "reference": row.get("reference", ""),
                 "reference_contexts": row.get("reference_contexts", []),
@@ -179,15 +219,47 @@ def _ensure_dataset(client: Any, name: str, rows: list[dict[str, Any]], reset: b
                 "expected_document_ids": row.get("expected_document_ids", []),
                 "selected_document_ids": row.get("selected_document_ids", []),
                 "category": row.get("category", "factual"),
+            },
+            {"case_id": row["id"], "category": row.get("category", "factual")},
+        )
+        for row in rows
+    }
+    existing = {
+        str(example.id): example
+        for example in _list_examples_if_present(client, dataset_id=dataset.id)
+    }
+    if len(existing) < len(expected):
+        existing.update(
+            {
+                str(example.id): example
+                for example in _list_examples_if_present(
+                    client, example_ids=list(expected)
+                )
+                if str(getattr(example, "dataset_id", "")) == str(dataset.id)
             }
-            for row in rows
-        ],
-        metadata=[
-            {"case_id": row["id"], "category": row.get("category", "factual")}
-            for row in rows
-        ],
-        ids=[_example_id(row) for row in rows],
-    )
+        )
+    for example_id, (inputs, outputs, metadata) in expected.items():
+        if example_id in existing:
+            client.update_example(
+                example_id,
+                inputs=inputs,
+                outputs=outputs,
+                metadata=metadata,
+                dataset_id=dataset.id,
+            )
+    missing = [
+        (example_id, values)
+        for example_id, values in expected.items()
+        if example_id not in existing
+    ]
+    if missing:
+        client.create_examples(
+            dataset_id=dataset.id,
+            inputs=[values[0] for _, values in missing],
+            outputs=[values[1] for _, values in missing],
+            metadata=[values[2] for _, values in missing],
+            ids=[example_id for example_id, _ in missing],
+        )
     return dataset
 
 
