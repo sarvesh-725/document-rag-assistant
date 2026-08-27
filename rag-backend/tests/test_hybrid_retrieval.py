@@ -144,6 +144,49 @@ async def test_hybrid_pipeline_runs_all_stages_and_records_evaluation():
     assert hook.evaluations[0].rerank_threshold is None
 
 
+@pytest.mark.asyncio
+async def test_hybrid_reranks_child_candidates_before_parent_expansion():
+    first = candidate("1", "child one", parent_id="parent-1")
+    second = candidate("2", "child two", parent_id="parent-2")
+    first.fusion_score = 0.9
+    second.fusion_score = 0.8
+    observed = {}
+
+    class StubDense:
+        async def retrieve(self, *args):
+            return [first, second]
+
+    class StubBm25:
+        async def retrieve(self, *args):
+            return []
+
+    class StubReranker:
+        async def rerank(self, query, candidates):
+            observed["reranker_input"] = list(candidates)
+            second.rerank_score = 0.9
+            first.rerank_score = 0.1
+            return [second, first]
+
+    class StubExpander:
+        async def expand(self, db, candidates):
+            observed["expander_input"] = list(candidates)
+            return candidates
+
+    retriever = HybridRetriever(
+        dense=StubDense(),
+        bm25=StubBm25(),
+        reranker=StubReranker(),
+        parent_expander=StubExpander(),
+        context_builder=ContextBuilder(RetrievalConfig(final_candidate_count=2)),
+    )
+
+    result = await retriever.retrieve("query", uuid.uuid4(), [uuid.uuid4()])
+
+    assert [item.chunk_id for item in observed["reranker_input"]] == ["1", "2"]
+    assert [item.chunk_id for item in observed["expander_input"]] == ["2", "1"]
+    assert result.context[0].candidate.chunk_id == "2"
+
+
 def test_context_builder_deduplicates_parent_and_serializes_provenance():
     item_a = candidate("1", "child one", parent_id="parent-1")
     item_b = candidate("2", "child two", parent_id="parent-1")

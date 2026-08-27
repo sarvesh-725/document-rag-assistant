@@ -49,16 +49,19 @@ class EvaluationSample:
                     if candidate not in expected_pages
                 )
         selected_document_ids = list(
-            value.get("selected_documents", value.get("selected_document_ids", []))
+            value.get(
+                "retrieval_scope",
+                value.get("selected_documents", value.get("selected_document_ids", [])),
+            )
         )
-        if not selected_document_ids:
-            selected_document_ids = list(expected_document_ids)
         return cls(
             question=question,
             expected_answer=value.get("ground_truth", value.get("expected_answer", "")),
             expected_document_ids=expected_document_ids,
             expected_pages=expected_pages,
-            query_type=value.get("category", value.get("query_type", "factual")),
+            query_type=str(
+                value.get("category", value.get("query_type", "factual"))
+            ).strip().lower(),
             sample_id=str(
                 value.get("id")
                 or "q-"

@@ -2,25 +2,33 @@
   "dense_only": {
     "dense_top_k": 30,
     "bm25_top_k": 0,
+    "rerank_top_k": 10,
     "reranker": null,
-    "parent_expansion": false
+    "parent_expansion": false,
+    "final_context_k": 8
   },
   "hybrid": {
     "dense_top_k": 30,
     "bm25_top_k": 30,
+    "rerank_top_k": 10,
     "reranker": null,
-    "parent_expansion": false
+    "parent_expansion": false,
+    "final_context_k": 8
   },
   "hybrid_parent": {
     "dense_top_k": 30,
     "bm25_top_k": 30,
+    "rerank_top_k": 10,
     "reranker": null,
-    "parent_expansion": true
+    "parent_expansion": true,
+    "final_context_k": 8
   },
   "hybrid_parent_rerank": {
     "dense_top_k": 30,
     "bm25_top_k": 30,
+    "rerank_top_k": 10,
     "reranker": "cohere",
-    "parent_expansion": true
+    "parent_expansion": true,
+    "final_context_k": 8
   }
 }

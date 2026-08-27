@@ -15,11 +15,15 @@ from app.database.connection import AsyncSessionLocal, engine
 from app.evaluation.datasets import EvaluationSample, load_jsonl
 from app.evaluation.dataset_generation import generate_dataset
 from app.evaluation.metrics import (
+    answer_token_f1,
+    citation_precision,
+    citation_recall,
+    document_recall_at_k,
+    evidence_support_rate,
     ndcg_at_k,
+    no_answer_correct,
     page_recall,
-    recall_at_k,
     reciprocal_rank,
-    string_relevancy,
 )
 from app.evaluation.langsmith_adapter import evaluate_with_langsmith
 from app.evaluation.strategies import PROFILE_NAMES, RAGStrategy, get_strategy
@@ -61,12 +65,18 @@ def _page_numbers(citations: list[dict]) -> list[int]:
 
 def _summary(cases: list[dict]) -> dict:
     numeric_fields = (
-        "recall_at_5",
-        "recall_at_10",
+        "document_recall_at_5",
+        "document_recall_at_10",
         "mrr",
         "ndcg_at_10",
         "page_recall",
-        "answer_relevancy",
+        "citation_precision",
+        "citation_recall",
+        "answer_token_f1",
+        "evidence_support_rate",
+        "no_answer_correct",
+        "retrieval_latency_ms",
+        "generation_latency_ms",
         "latency_ms",
     )
     summary = {"case_count": len(cases)}
@@ -75,6 +85,24 @@ def _summary(cases: list[dict]) -> dict:
         if values:
             summary[field] = round(mean(values), 4)
     return summary
+
+
+def _answer_samples(samples: list[EvaluationSample], limit: int) -> list[EvaluationSample]:
+    """Keep no-answer cases in the bounded answer set."""
+    no_answer = [sample for sample in samples if sample.query_type == "no_answer"]
+    answerable = [sample for sample in samples if sample.query_type != "no_answer"]
+    return (no_answer + answerable)[:limit]
+
+
+def _retrieval_screen_key(result: dict) -> tuple[float, float, float, float, float]:
+    summary = result["summary"]
+    return (
+        summary.get("document_recall_at_10", 0.0),
+        summary.get("citation_recall", 0.0),
+        summary.get("page_recall", 0.0),
+        summary.get("mrr", 0.0),
+        -summary.get("retrieval_latency_ms", float("inf")),
+    )
 
 
 async def _generate_answer(
@@ -127,12 +155,14 @@ async def _run_strategy(
                 else []
             )
             version_ids = [document.version_id for document in resolved]
+            retrieval_started = time.perf_counter()
             retrieval = await retriever.retrieve(
                 sample.question,
                 user_id,
                 version_ids,
                 db,
             )
+            retrieval_latency_ms = round((time.perf_counter() - retrieval_started) * 1000, 2)
             analysis = classify_intent(sample.question)
             package = prompt_builder.build(
                 query_analysis=analysis,
@@ -141,7 +171,12 @@ async def _run_strategy(
                 retrieved_evidence=retrieval.context,
                 current_question=sample.question,
             )
-            if has_sufficient_evidence(retrieval):
+            evidence_available = has_sufficient_evidence(retrieval)
+            is_no_answer = sample.query_type == "no_answer"
+            generation_started = time.perf_counter()
+            if is_no_answer:
+                answer = "" if retrieval_only else NO_GROUNDING_RESPONSE
+            elif evidence_available:
                 answer = (
                     ""
                     if retrieval_only
@@ -153,43 +188,111 @@ async def _run_strategy(
                 )
             else:
                 answer = "" if retrieval_only else NO_GROUNDING_RESPONSE
+            generation_latency_ms = (
+                None
+                if retrieval_only
+                else round((time.perf_counter() - generation_started) * 1000, 2)
+            )
 
-            citations = package.citations
+            citations = [] if is_no_answer else package.citations
             retrieved_documents = [
                 candidate.document_id for candidate in retrieval.reranked_candidates
             ]
             contexts = [block.text for block in retrieval.context]
+            retrieved_candidates = [
+                {
+                    "identity": candidate.identity,
+                    "document_id": candidate.document_id,
+                    "version_id": candidate.version_id,
+                    "parent_id": candidate.parent_id,
+                    "chunk_id": candidate.chunk_id,
+                    "page_start": candidate.page_start,
+                    "page_end": candidate.page_end,
+                    "dense_rank": candidate.dense_rank,
+                    "bm25_rank": candidate.bm25_rank,
+                    "fusion_score": candidate.fusion_score,
+                    "rerank_rank": candidate.rerank_rank,
+                    "rerank_score": candidate.rerank_score,
+                }
+                for candidate in retrieval.reranked_candidates
+            ]
             case = {
                 "id": sample.sample_id,
                 "question": sample.question,
                 "category": sample.query_type,
                 "reference": sample.expected_answer,
+                "selected_document_ids": sample.selected_document_ids,
+                "expected_document_ids": sample.expected_document_ids,
+                "expected_pages": sample.expected_pages,
+                "expected_sources": sample.expected_sources,
                 "reference_contexts": sample.reference_contexts,
                 "contexts": contexts,
+                "selected_context": package.evidence,
                 "answer": answer,
                 "retrieved_document_ids": retrieved_documents,
+                "retrieved_candidate_ids": [
+                    candidate["identity"] for candidate in retrieved_candidates
+                ],
+                "retrieved_candidates": retrieved_candidates,
+                "retrieved_pages": _page_numbers(retrieved_candidates),
                 "citations": citations,
-                "grounded": has_sufficient_evidence(retrieval),
-                "recall_at_5": recall_at_k(
-                    retrieved_documents, sample.expected_document_ids, 5
+                "grounded": evidence_available,
+                "evidence_available": evidence_available,
+                "document_recall_at_5": (
+                    None
+                    if not sample.expected_document_ids
+                    else document_recall_at_k(
+                        retrieved_documents, sample.expected_document_ids, 5
+                    )
                 ),
-                "recall_at_10": recall_at_k(
-                    retrieved_documents, sample.expected_document_ids, 10
+                "document_recall_at_10": (
+                    None
+                    if not sample.expected_document_ids
+                    else document_recall_at_k(
+                        retrieved_documents, sample.expected_document_ids, 10
+                    )
                 ),
-                "mrr": reciprocal_rank(
-                    retrieved_documents, sample.expected_document_ids
+                "mrr": (
+                    None
+                    if not sample.expected_document_ids
+                    else reciprocal_rank(retrieved_documents, sample.expected_document_ids)
                 ),
-                "ndcg_at_10": ndcg_at_k(
-                    retrieved_documents, sample.expected_document_ids, 10
+                "ndcg_at_10": (
+                    None
+                    if not sample.expected_document_ids
+                    else ndcg_at_k(
+                        retrieved_documents, sample.expected_document_ids, 10
+                    )
                 ),
-                "page_recall": page_recall(
-                    _page_numbers(citations), sample.expected_pages
+                "page_recall": (
+                    None
+                    if not sample.expected_pages
+                    else page_recall(_page_numbers(citations), sample.expected_pages)
                 ),
-                "answer_relevancy": (
+                "citation_precision": citation_precision(citations, sample.expected_sources),
+                "citation_recall": citation_recall(citations, sample.expected_sources),
+                "answer_token_f1": (
+                    None
+                    if retrieval_only or is_no_answer
+                    else answer_token_f1(answer, sample.expected_answer)
+                ),
+                "evidence_support_rate": (
+                    None
+                    if retrieval_only or is_no_answer
+                    else evidence_support_rate(answer, contexts)
+                ),
+                "no_answer_correct": (
                     None
                     if retrieval_only
-                    else string_relevancy(answer, sample.expected_answer)
+                    else no_answer_correct(
+                        answer,
+                        sample.query_type,
+                        sample.expected_sources,
+                        evidence_available,
+                    )
                 ),
+                "retrieval_latency_ms": retrieval_latency_ms,
+                "generation_latency_ms": generation_latency_ms,
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
                 "retrieval_counts": {
                     "dense": len(retrieval.dense_candidates),
@@ -225,8 +328,8 @@ async def _run_strategy(
 async def _run(args: argparse.Namespace) -> None:
     user_id = uuid.UUID(args.user_id)
     settings = get_settings()
-    if args.case_limit is not None and not 1 <= args.case_limit <= 10:
-        raise ValueError("case_limit must be between 1 and 10")
+    if args.case_limit is not None and not 1 <= args.case_limit <= 12:
+        raise ValueError("case_limit must be between 1 and 12")
     generated_dataset = False
     if args.auto:
         document_ids = [uuid.UUID(value) for value in args.document_id]
@@ -250,6 +353,12 @@ async def _run(args: argparse.Namespace) -> None:
     samples = load_jsonl(args.dataset)
     if not samples:
         raise ValueError(f"Evaluation dataset is empty: {args.dataset}")
+    missing_scope = [sample.sample_id for sample in samples if not sample.selected_document_ids]
+    if missing_scope:
+        raise ValueError(
+            "Every evaluation case must provide selected_documents/retrieval_scope; "
+            f"missing: {', '.join(missing_scope)}"
+        )
     names = list(PROFILE_NAMES) if args.all_strategies or args.auto else [args.strategy]
     if args.langsmith and args.retrieval_only:
         raise ValueError("--langsmith requires generated answers; remove --retrieval-only")
@@ -281,30 +390,30 @@ async def _run(args: argparse.Namespace) -> None:
                 request_delay=settings.evaluation_request_delay_seconds,
             )
         if args.auto:
-            best_name = max(
-                results,
-                key=lambda name: (
-                    results[name]["summary"].get("recall_at_10", 0.0) * 0.5
-                    + results[name]["summary"].get("page_recall", 0.0) * 0.3
-                    + results[name]["summary"].get("mrr", 0.0) * 0.2
-                ),
+            top_names = sorted(
+                results, key=lambda name: _retrieval_screen_key(results[name]), reverse=True
+            )[:2]
+            answer_results = {}
+            answer_samples = _answer_samples(
+                samples, args.case_limit or settings.evaluation_case_limit
             )
-            selected = await _run_strategy(
-                samples[: args.case_limit or settings.evaluation_case_limit],
-                get_strategy(best_name),
-                user_id,
-                retrieval_only=False,
-                use_langsmith=args.langsmith,
-                embeddings=embedding_cache,
-                langsmith_limit=args.case_limit or settings.evaluation_case_limit,
-                langsmith_dataset=args.langsmith_dataset,
-                reset=args.reset,
-                request_delay=settings.evaluation_request_delay_seconds,
-            )
+            for index, name in enumerate(top_names):
+                answer_results[name] = await _run_strategy(
+                    answer_samples,
+                    get_strategy(name),
+                    user_id,
+                    retrieval_only=False,
+                    use_langsmith=args.langsmith,
+                    embeddings=embedding_cache,
+                    langsmith_limit=len(answer_samples),
+                    langsmith_dataset=args.langsmith_dataset,
+                    reset=args.reset and index == 0,
+                    request_delay=settings.evaluation_request_delay_seconds,
+                )
             results = {
                 "retrieval_comparison": results,
-                "selected_strategy": best_name,
-                "selected_evaluation": selected,
+                "top_strategies": top_names,
+                "answer_comparison": answer_results,
             }
     finally:
         await engine.dispose()
@@ -327,16 +436,14 @@ async def _run(args: argparse.Namespace) -> None:
     )
     print(f"Saved evaluation results to {output_path}")
     if args.auto:
-        print(f"selected_strategy: {results['selected_strategy']}")
+        print(f"top_strategies: {', '.join(results['top_strategies'])}")
         for name, result in results["retrieval_comparison"].items():
             print(f"{name}: {json.dumps(result['summary'], sort_keys=True)}")
-        print(
-            "selected_evaluation: "
-            + json.dumps(results["selected_evaluation"]["summary"], sort_keys=True)
-        )
-        langsmith = results["selected_evaluation"].get("langsmith", {})
-        if langsmith.get("experiment_url"):
-            print(f"langsmith_experiment: {langsmith['experiment_url']}")
+        for name, result in results["answer_comparison"].items():
+            print(f"{name}_answers: {json.dumps(result['summary'], sort_keys=True)}")
+            langsmith = result.get("langsmith", {})
+            if langsmith.get("experiment_url"):
+                print(f"{name}_langsmith_experiment: {langsmith['experiment_url']}")
     else:
         for name, result in results.items():
             print(f"{name}: {json.dumps(result['summary'], sort_keys=True)}")

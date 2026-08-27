@@ -38,5 +38,5 @@ async def test_evaluation_runner_is_offline_and_calls_injected_retriever():
 
     result = await run_retrieval_evaluation([sample], retrieve, STRATEGIES["hybrid"])
 
-    assert result[0]["recall_at_5"] == 1.0
+    assert result[0]["document_recall_at_5"] == 1.0
     assert calls[0][0] is sample

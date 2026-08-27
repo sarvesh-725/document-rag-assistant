@@ -107,7 +107,12 @@ def _bounded_context(contexts: list[SourceContext], max_chars: int) -> list[Sour
     return selected
 
 
-def _prompt(contexts: list[SourceContext], count: int, offset: int) -> str:
+def _prompt(
+    contexts: list[SourceContext],
+    count: int,
+    offset: int,
+    required_no_answer: int = 0,
+) -> str:
     evidence = []
     for index, context in enumerate(contexts, start=1):
         page = (
@@ -125,12 +130,16 @@ def _prompt(contexts: list[SourceContext], count: int, offset: int) -> str:
     )
     return f"""Create {count} evaluation cases from the supplied document evidence.
 This is batch {offset // max(count, 1) + 1}. Use only the evidence below.
-Generate answerable questions with concise ground-truth answers. Include a mix
-of these categories when the evidence supports them: {categories}.
-For every answerable case, return the exact document_id and page or page range
-that supports the answer. Never invent a page number. For a page-less source,
-return page as null and use its section when available. A no_answer case must
-have an empty answer only when the supplied evidence cannot answer it.
+The complete retrieval scope is every document_id shown below. Do not narrow the
+scope to the document that supports a question. Generate concise ground-truth
+answers for answerable questions and include a mix of these categories when the
+evidence supports them: {categories}.
+This batch must contain at least {required_no_answer} no_answer case(s). A
+no_answer case must ask about information absent from every supplied document,
+return an empty ground_truth, and return an empty sources array. Never invent a
+page number. For every answerable case, return the exact document_id and page or
+page range that supports the answer. For a page-less source, return page as null
+and use its section when available.
 
 Return JSON only as an array with this shape:
 [{{
@@ -145,7 +154,10 @@ DOCUMENT EVIDENCE:
 
 
 async def _generate_batch(
-    contexts: list[SourceContext], count: int, batch_number: int
+    contexts: list[SourceContext],
+    count: int,
+    batch_number: int,
+    required_no_answer: int = 0,
 ) -> list[dict[str, Any]]:
     from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -157,7 +169,12 @@ async def _generate_batch(
         temperature=0,
         google_api_key=settings.gemini_api_key,
     )
-    prompt = _prompt(contexts, count, (batch_number - 1) * count)
+    prompt = _prompt(
+        contexts,
+        count,
+        (batch_number - 1) * count,
+        required_no_answer=required_no_answer,
+    )
     for attempt in range(3):
         try:
             return _parse_json_array(_response_text(await llm.ainvoke(prompt)))
@@ -169,11 +186,36 @@ async def _generate_batch(
 
 
 def _validated_case(
-    item: dict[str, Any], contexts: list[SourceContext], index: int
+    item: dict[str, Any],
+    contexts: list[SourceContext],
+    index: int,
+    scope_document_ids: list[str] | None = None,
 ) -> dict[str, Any] | None:
     question = str(item.get("question", "")).strip()
     answer = str(item.get("ground_truth", "")).strip()
-    if not question or not answer:
+    category = str(item.get("category", "direct_lookup")).strip().lower()
+    scope_document_ids = scope_document_ids or sorted(
+        {context.document_id for context in contexts}
+    )
+    raw_sources = item.get("sources", item.get("expected_sources", []))
+    if not question:
+        return None
+
+    if category == "no_answer":
+        if answer or raw_sources:
+            return None
+        return {
+            "id": f"q-{index:03d}",
+            "category": category,
+            "question": question,
+            "selected_documents": scope_document_ids,
+            "ground_truth": "",
+            "expected_sources": [],
+            "reference_contexts": [],
+            "conversation": [],
+        }
+
+    if not answer:
         return None
 
     context_by_document: dict[str, list[SourceContext]] = {}
@@ -182,7 +224,7 @@ def _validated_case(
 
     sources: list[dict[str, Any]] = []
     reference_contexts: list[str] = []
-    for raw_source in item.get("sources", item.get("expected_sources", [])):
+    for raw_source in raw_sources:
         if not isinstance(raw_source, dict):
             continue
         document_id = str(raw_source.get("document_id", ""))
@@ -221,9 +263,9 @@ def _validated_case(
         return None
     return {
         "id": f"q-{index:03d}",
-        "category": item.get("category", "direct_lookup"),
+        "category": category,
         "question": question,
-        "selected_documents": sorted({source["document_id"] for source in sources}),
+        "selected_documents": scope_document_ids,
         "ground_truth": answer,
         "expected_sources": sources,
         "reference_contexts": list(dict.fromkeys(reference_contexts)),
@@ -243,8 +285,8 @@ async def generate_dataset(
     settings = get_settings()
     requested_count = sample_count or settings.evaluation_sample_count
     requested_batch_size = batch_size or settings.evaluation_batch_size
-    if not 1 <= requested_count <= 20:
-        raise ValueError("sample_count must be between 1 and 20")
+    if not 1 <= requested_count <= 16:
+        raise ValueError("sample_count must be between 1 and 16")
     if not 1 <= requested_batch_size <= 5:
         raise ValueError("batch_size must be between 1 and 5")
     contexts = await _load_source_contexts(db, user_id, document_ids)
@@ -256,15 +298,23 @@ async def generate_dataset(
     seen_questions: set[str] = set()
     batch_number = 1
     max_batches = ((requested_count + requested_batch_size - 1) // requested_batch_size) * 2
+    required_no_answers = min(2, requested_count)
     while len(generated) < requested_count and batch_number <= max_batches:
         remaining = requested_count - len(generated)
+        no_answer_count = sum(case["category"] == "no_answer" for case in generated)
         batch = await _generate_batch(
             bounded,
             min(requested_batch_size, remaining),
             batch_number,
+            required_no_answer=max(0, required_no_answers - no_answer_count),
         )
         for item in batch:
-            case = _validated_case(item, bounded, len(generated) + 1)
+            case = _validated_case(
+                item,
+                bounded,
+                len(generated) + 1,
+                scope_document_ids=sorted({context.document_id for context in contexts}),
+            )
             question_key = case["question"].casefold() if case else ""
             if case is not None and question_key not in seen_questions:
                 seen_questions.add(question_key)
@@ -277,9 +327,15 @@ async def generate_dataset(
         if len(generated) < requested_count:
             await asyncio.sleep(settings.evaluation_request_delay_seconds)
 
-    if len(generated) < min(5, requested_count):
+    no_answer_count = sum(case["category"] == "no_answer" for case in generated)
+    if len(generated) < requested_count:
         raise RuntimeError(
-            f"Only {len(generated)} valid evaluation cases were generated; "
+            f"Only {len(generated)} of {requested_count} valid evaluation cases were generated; "
             "add more READY document content or retry generation"
+        )
+    if no_answer_count < required_no_answers:
+        raise RuntimeError(
+            f"Only {no_answer_count} no_answer cases were generated; retry generation "
+            "so the retrieval scope can be tested with distractors"
         )
     return generated

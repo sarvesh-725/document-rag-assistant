@@ -14,6 +14,7 @@ class RAGStrategy:
     reranker: str | None = "cohere"
     rerank_top_k: int = 10
     parent_expansion: bool = True
+    final_context_k: int | None = None
     history_recent_messages: int = 4
 
 

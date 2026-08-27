@@ -16,27 +16,27 @@ def test_langsmith_metrics_are_bounded_and_reproducible():
     outputs = {
         "answer": "Revenue grew in 2024",
         "contexts": ["Revenue grew in 2024 according to the annual report."],
+        "retrieved_document_ids": ["doc-1"],
+        "citations": [{"document_id": "doc-1", "page_start": 1, "page_end": 1}],
     }
     expected = {
         "reference": "Revenue grew in 2024",
         "reference_contexts": ["Revenue grew in 2024 according to the annual report."],
+        "expected_document_ids": ["doc-1"],
+        "expected_pages": [1],
+        "expected_sources": [{"document_id": "doc-1", "page": 1}],
+        "category": "direct_lookup",
     }
 
     scores = _metric_scores(outputs, expected)
 
     assert scores == _metric_scores(outputs, expected)
-    assert set(scores) == {
-        "context_precision",
-        "context_recall",
-        "faithfulness",
-        "answer_relevancy",
-    }
-    assert all(0.0 <= value <= 1.0 for value in scores.values())
-    assert scores["context_precision"] == 1.0
-    assert scores["context_recall"] == 1.0
-    assert _evaluator("faithfulness")(
+    assert all(value is None or 0.0 <= value <= 1.0 for value in scores.values())
+    assert scores["citation_precision"] == 1.0
+    assert scores["citation_recall"] == 1.0
+    assert _evaluator("evidence_support_rate")(
         SimpleNamespace(outputs=outputs), SimpleNamespace(outputs=expected), langsmith_extra={}
-    ) == {"key": "faithfulness", "score": 1.0}
+    ) == {"key": "evidence_support_rate", "score": 1.0}
 
 
 def test_dataset_fingerprint_ignores_strategy_predictions():
@@ -59,8 +59,14 @@ async def test_langsmith_adapter_uploads_one_reusable_experiment(monkeypatch):
             "question": "What grew?",
             "reference": "Revenue grew",
             "reference_contexts": ["Revenue grew"],
+            "expected_document_ids": ["doc-1"],
+            "expected_pages": [1],
+            "expected_sources": [{"document_id": "doc-1", "page": 1}],
+            "category": "direct_lookup",
             "answer": "Revenue grew",
             "contexts": ["Revenue grew"],
+            "retrieved_document_ids": ["doc-1"],
+            "citations": [{"document_id": "doc-1", "page_start": 1, "page_end": 1}],
         }
     ]
     fake_client = FakeLangSmithClient(None, dataset_id="dataset-id")
@@ -88,7 +94,7 @@ async def test_langsmith_adapter_uploads_one_reusable_experiment(monkeypatch):
 
     assert result["dataset_id"] == "dataset-id"
     assert result["experiment_name"] == "experiment"
-    assert result["summary"]["faithfulness"] == 1.0
+    assert result["summary"]["evidence_support_rate"] == 1.0
 
 
 def test_named_dataset_rejects_changed_cases_without_reset():

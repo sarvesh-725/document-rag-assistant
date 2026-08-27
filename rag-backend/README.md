@@ -32,6 +32,11 @@ The frontend runs at `http://localhost:3000` and calls the API at
 - Qdrant stores and searches document vectors.
 - Gemini and Cohere are configured external providers; their keys are never committed.
 
+Retrieval runs dense Qdrant search and independent in-process BM25 candidate
+generation, then applies application-side RRF, optional Cohere child reranking,
+deterministic parent expansion/deduplication, and a bounded context budget.
+Qdrant-native sparse retrieval is a future scaling option, not part of this MVP.
+
 ## Operational Endpoints
 
 - `GET http://localhost:8000/health` checks API liveness.
@@ -53,12 +58,14 @@ For API details, see `API.md`. For the remaining implementation phases, see
 ## RAG Evaluation
 
 For the complete upload-to-results workflow, package migration, rate limits,
-manual reset steps, and LangSmith setup, see `EVALUATION_GUIDE.md`.
+manual reset steps, and LangSmith setup, see `EVALUATION_GUIDE.md`. The final
+developer-only handoff checklist is in `FINAL_MANUAL_STEPS.md`.
 
-The evaluator accepts a verified JSONL dataset or generates three page-aware
-cases from two or three uploaded READY PDF/TXT documents. It compares the
-existing retrieval profiles, bounds answer generation, and uploads repeatable
-experiments to LangSmith. Results are also written to
+The evaluator accepts a verified JSONL dataset or generates twelve page-aware
+cases, including no-answer cases, from two or three uploaded READY PDF/TXT
+documents. It compares the existing retrieval profiles, answers only the top
+two retrieval profiles, bounds Gemini usage, and uploads repeatable experiments
+to LangSmith. Results are also written to
 `evaluation/results/`. The profiles run dense and BM25 independently before
 RRF; `dense_only`, `hybrid`, `hybrid_parent`, and `hybrid_parent_rerank` remain
 the existing strategy set.

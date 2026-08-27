@@ -327,7 +327,11 @@ class ParentExpander:
         for children in grouped.values():
             children = sorted(
                 children,
-                key=lambda item: item.fusion_score or 0.0,
+                key=lambda item: (
+                    item.rerank_score
+                    if item.rerank_score is not None
+                    else item.fusion_score or 0.0
+                ),
                 reverse=True,
             )
             representative = children[0]
@@ -353,7 +357,15 @@ class ParentExpander:
                     child_evidence=children,
                 )
             )
-        return sorted(expanded, key=lambda item: item.fusion_score or 0.0, reverse=True)
+        return sorted(
+            expanded,
+            key=lambda item: (
+                item.rerank_score
+                if item.rerank_score is not None
+                else item.fusion_score or 0.0
+            ),
+            reverse=True,
+        )
 
 
 reranker_failure_count = 0
@@ -512,6 +524,11 @@ class HybridRetriever:
                 dense_top_k=min(max(0, strategy.dense_top_k), config.dense_top_k),
                 bm25_top_k=min(max(0, strategy.bm25_top_k), config.bm25_top_k),
                 max_rerank_k=min(max(0, strategy.rerank_top_k), config.max_rerank_k),
+                final_candidate_count=(
+                    min(max(0, strategy.final_context_k), config.final_candidate_count)
+                    if strategy.final_context_k is not None
+                    else config.final_candidate_count
+                ),
             )
         self.dense = dense or DenseRetriever(embeddings=embeddings, config=config)
         self.bm25 = bm25 or BM25Retriever(config=config)
@@ -534,17 +551,17 @@ class HybridRetriever:
         )
         fused_candidates = self.fusion.fuse(dense_candidates, bm25_candidates)
         fused_candidates = fused_candidates[: self.context_builder.config.max_rerank_k]
-        expanded_candidates = (
-            await self.parent_expander.expand(db, fused_candidates)
-            if self.parent_expander is not None
+        reranked_candidates = (
+            await self.reranker.rerank(query, fused_candidates)
+            if self.reranker is not None
             else fused_candidates
         )
-        reranked_candidates = (
-            await self.reranker.rerank(query, expanded_candidates)
-            if self.reranker is not None
-            else expanded_candidates
+        expanded_candidates = (
+            await self.parent_expander.expand(db, reranked_candidates)
+            if self.parent_expander is not None
+            else reranked_candidates
         )
-        context = self.context_builder.build(reranked_candidates)
+        context = self.context_builder.build(expanded_candidates)
         if self.evaluation_hook is not None:
             self.evaluation_hook.on_retrieval_complete(
                 RetrievalEvaluation(

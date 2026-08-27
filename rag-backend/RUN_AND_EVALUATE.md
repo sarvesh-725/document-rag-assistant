@@ -168,8 +168,8 @@ Set-Location -LiteralPath "E:\document-assistant\rag-backend"
 & "E:\document-assistant\.venv\Scripts\python.exe" -m app.evaluation.cli --user-id YOUR_USER_UUID --auto --langsmith --document-id DOCUMENT_UUID_1 --document-id DOCUMENT_UUID_2
 ```
 
-The command generates three page-linked cases, compares all four retrieval
-profiles without answer generation, evaluates only the selected profile, and
+The command generates twelve page-linked cases, compares all four retrieval
+profiles without answer generation, evaluates only the top two profiles, and
 writes:
 
 ```text
@@ -201,7 +201,7 @@ Then compare retrieval without spending requests on answer generation:
 Evaluate the strategy being considered:
 
 ```powershell
-& "E:\document-assistant\.venv\Scripts\python.exe" -m app.evaluation.cli --user-id YOUR_USER_UUID --dataset evaluation/generated_dataset.jsonl --strategy hybrid_parent_rerank --langsmith --case-limit 3
+& "E:\document-assistant\.venv\Scripts\python.exe" -m app.evaluation.cli --user-id YOUR_USER_UUID --dataset evaluation/generated_dataset.jsonl --strategy hybrid_parent_rerank --langsmith --case-limit 12
 ```
 
 Available profile names are `dense_only`, `hybrid`, `hybrid_parent`, and

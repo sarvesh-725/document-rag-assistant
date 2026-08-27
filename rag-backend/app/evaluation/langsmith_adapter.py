@@ -1,8 +1,9 @@
 """LangSmith dataset and experiment adapter for offline RAG evaluation.
 
-This module is intentionally outside the production request path. The target
-used by LangSmith returns already-computed cases, so running an experiment does
-not call Gemini again and is safe to repeat against the same dataset.
+This module is outside the production request path. The target returns the
+actual predictions produced locally by the selected RAG strategy; LangSmith
+stores those predictions and applies deterministic code evaluators without
+calling Gemini again.
 """
 
 from __future__ import annotations
@@ -11,65 +12,99 @@ import asyncio
 import hashlib
 import json
 import math
-import re
 import uuid
 from collections.abc import Sequence
 from typing import Any
 
 from app.config import get_settings
-from app.evaluation.metrics import string_relevancy
-
-
-TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
-METRIC_NAMES = (
-    "context_precision",
-    "context_recall",
-    "faithfulness",
-    "answer_relevancy",
+from app.evaluation.metrics import (
+    answer_token_f1,
+    citation_precision,
+    citation_recall,
+    document_recall_at_k,
+    evidence_support_rate,
+    ndcg_at_k,
+    no_answer_correct,
+    page_recall,
+    reciprocal_rank,
 )
 
 
-def _tokens(value: str) -> set[str]:
-    return set(TOKEN_PATTERN.findall(value.lower()))
+METRIC_NAMES = (
+    "document_recall_at_5",
+    "document_recall_at_10",
+    "mrr",
+    "ndcg_at_10",
+    "page_recall",
+    "citation_precision",
+    "citation_recall",
+    "answer_token_f1",
+    "evidence_support_rate",
+    "no_answer_correct",
+)
 
 
-def _coverage(source: str, target: str) -> float:
-    source_tokens = _tokens(source)
-    target_tokens = _tokens(target)
-    return len(source_tokens.intersection(target_tokens)) / len(source_tokens) if source_tokens else 0.0
+def _page_numbers(citations: Sequence[dict[str, Any]]) -> list[int]:
+    pages: set[int] = set()
+    for citation in citations:
+        start = citation.get("page_start", citation.get("page"))
+        end = citation.get("page_end", start)
+        if start is not None:
+            pages.update(range(int(start), int(end or start) + 1))
+    return sorted(pages)
 
 
-def _reference_texts(example_outputs: dict[str, Any]) -> list[str]:
-    references = [str(value) for value in example_outputs.get("reference_contexts", []) if value]
-    return references or [str(example_outputs.get("reference", ""))]
-
-
-def _metric_scores(outputs: dict[str, Any], example_outputs: dict[str, Any]) -> dict[str, float]:
-    """Calculate bounded, reproducible evaluators without another model call."""
-    contexts = [str(value) for value in outputs.get("contexts", []) if value]
-    reference_texts = _reference_texts(example_outputs)
-    reference = str(example_outputs.get("reference", ""))
-    combined_context = "\n".join(contexts)
-    combined_reference = "\n".join(reference_texts)
-
-    if contexts and combined_reference:
-        context_precision = _coverage(combined_context, combined_reference)
-        context_recall = _coverage(combined_reference, combined_context)
-    else:
-        context_precision = 0.0
-        context_recall = 0.0
-
+def _metric_scores(
+    outputs: dict[str, Any], example_outputs: dict[str, Any]
+) -> dict[str, float | None]:
+    retrieved_documents = [
+        str(value) for value in outputs.get("retrieved_document_ids", [])
+    ]
+    expected_documents = [
+        str(value) for value in example_outputs.get("expected_document_ids", [])
+    ]
+    citations = [value for value in outputs.get("citations", []) if isinstance(value, dict)]
+    expected_sources = [
+        value
+        for value in example_outputs.get("expected_sources", [])
+        if isinstance(value, dict)
+    ]
+    expected_pages = [int(value) for value in example_outputs.get("expected_pages", [])]
     answer = str(outputs.get("answer", ""))
-    faithfulness = _coverage(answer, combined_context) if answer and combined_context else 0.0
+    reference = str(example_outputs.get("reference", ""))
+    contexts = [str(value) for value in outputs.get("contexts", []) if value]
+    category = str(example_outputs.get("category", ""))
+
     return {
-        "context_precision": round(context_precision, 4),
-        "context_recall": round(context_recall, 4),
-        "faithfulness": round(faithfulness, 4),
-        "answer_relevancy": round(string_relevancy(answer, reference), 4),
+        "document_recall_at_5": (
+            None
+            if not expected_documents
+            else document_recall_at_k(retrieved_documents, expected_documents, 5)
+        ),
+        "document_recall_at_10": (
+            None
+            if not expected_documents
+            else document_recall_at_k(retrieved_documents, expected_documents, 10)
+        ),
+        "mrr": None if not expected_documents else reciprocal_rank(retrieved_documents, expected_documents),
+        "ndcg_at_10": None if not expected_documents else ndcg_at_k(retrieved_documents, expected_documents, 10),
+        "page_recall": None if not expected_pages else page_recall(_page_numbers(citations), expected_pages),
+        "citation_precision": citation_precision(citations, expected_sources),
+        "citation_recall": citation_recall(citations, expected_sources),
+        "answer_token_f1": None if category == "no_answer" else answer_token_f1(answer, reference),
+        "evidence_support_rate": (
+            None if category == "no_answer" else evidence_support_rate(answer, contexts)
+        ),
+        "no_answer_correct": no_answer_correct(
+            answer,
+            category,
+            expected_sources,
+            bool(outputs.get("evidence_available", False)),
+        ),
     }
 
 
-def _summary(scores: Sequence[dict[str, float]]) -> dict[str, float]:
+def _summary(scores: Sequence[dict[str, float | None]]) -> dict[str, float]:
     result: dict[str, float] = {}
     for name in METRIC_NAMES:
         values = [score[name] for score in scores if isinstance(score.get(name), (int, float))]
@@ -132,27 +167,25 @@ def _ensure_dataset(client: Any, name: str, rows: list[dict[str, Any]], reset: b
         description="Document Assistant evaluation cases",
         metadata={"source_fingerprint": fingerprint, "source": "document-assistant"},
     )
-    inputs = [
-        {"case_id": row["id"], "question": row["question"]}
-        for row in rows
-    ]
-    outputs = [
-        {
-            "reference": row.get("reference", ""),
-            "reference_contexts": row.get("reference_contexts", []),
-            "expected_document_ids": row.get("expected_document_ids", []),
-        }
-        for row in rows
-    ]
-    metadata = [
-        {"case_id": row["id"], "category": row.get("category", "factual")}
-        for row in rows
-    ]
     client.create_examples(
         dataset_name=name,
-        inputs=inputs,
-        outputs=outputs,
-        metadata=metadata,
+        inputs=[{"case_id": row["id"], "question": row["question"]} for row in rows],
+        outputs=[
+            {
+                "reference": row.get("reference", ""),
+                "reference_contexts": row.get("reference_contexts", []),
+                "expected_sources": row.get("expected_sources", []),
+                "expected_pages": row.get("expected_pages", []),
+                "expected_document_ids": row.get("expected_document_ids", []),
+                "selected_document_ids": row.get("selected_document_ids", []),
+                "category": row.get("category", "factual"),
+            }
+            for row in rows
+        ],
+        metadata=[
+            {"case_id": row["id"], "category": row.get("category", "factual")}
+            for row in rows
+        ],
         ids=[_example_id(row) for row in rows],
     )
     return dataset
@@ -162,6 +195,15 @@ def _evaluator(name: str):
     def evaluate_run(run: Any, example: Any = None, **_: Any) -> dict[str, Any]:
         outputs = getattr(run, "outputs", None) or {}
         expected = getattr(example, "outputs", None) or {}
+        category = expected.get("category")
+        if name in {"document_recall_at_5", "document_recall_at_10", "mrr", "ndcg_at_10"} and not expected.get("expected_document_ids"):
+            return {"key": name, "comment": "not_applicable"}
+        if name == "page_recall" and not expected.get("expected_pages"):
+            return {"key": name, "comment": "not_applicable"}
+        if name == "no_answer_correct" and category != "no_answer":
+            return {"key": name, "comment": "not_applicable"}
+        if name in {"answer_token_f1", "evidence_support_rate"} and category == "no_answer":
+            return {"key": name, "comment": "not_applicable"}
         return {"key": name, "score": _metric_scores(outputs, expected)[name]}
 
     evaluate_run.__name__ = name
@@ -175,7 +217,7 @@ async def evaluate_with_langsmith(
     dataset_name: str | None = None,
     reset: bool = False,
 ) -> dict[str, Any]:
-    """Sync a dataset and upload one sequential LangSmith experiment."""
+    """Sync a golden dataset and upload one sequential experiment."""
     if not rows:
         return {"cases": [], "summary": {}, "dataset_name": dataset_name}
 
@@ -208,6 +250,10 @@ async def evaluate_with_langsmith(
             "contexts": case.get("contexts", []),
             "retrieved_document_ids": case.get("retrieved_document_ids", []),
             "citations": case.get("citations", []),
+            "retrieved_candidates": case.get("retrieved_candidates", []),
+            "evidence_available": case.get("evidence_available", False),
+            "retrieval_latency_ms": case.get("retrieval_latency_ms"),
+            "generation_latency_ms": case.get("generation_latency_ms"),
         }
 
     def run_experiment() -> Any:
@@ -217,7 +263,7 @@ async def evaluate_with_langsmith(
             evaluators=[_evaluator(metric) for metric in METRIC_NAMES],
             client=client,
             experiment_prefix=f"{settings.langsmith_project}-{strategy_name}",
-            description="Offline RAG evaluation; target cases were generated locally",
+            description="Offline RAG experiment using locally executed strategy outputs",
             metadata={"strategy": strategy_name, "dataset_fingerprint": _fingerprint(rows)},
             max_concurrency=0,
             upload_results=True,
@@ -225,10 +271,20 @@ async def evaluate_with_langsmith(
         )
 
     experiment = await asyncio.to_thread(run_experiment)
-    scores = [_metric_scores(
-        {"answer": row.get("answer", ""), "contexts": row.get("contexts", [])},
-        {"reference": row.get("reference", ""), "reference_contexts": row.get("reference_contexts", [])},
-    ) for row in rows]
+    scores = [
+        _metric_scores(
+            row,
+            {
+                "reference": row.get("reference", ""),
+                "reference_contexts": row.get("reference_contexts", []),
+                "expected_sources": row.get("expected_sources", []),
+                "expected_pages": row.get("expected_pages", []),
+                "expected_document_ids": row.get("expected_document_ids", []),
+                "category": row.get("category", "factual"),
+            },
+        )
+        for row in rows
+    ]
     return {
         "cases": scores,
         "summary": _summary(scores),

@@ -166,15 +166,16 @@ based on observed failures.
   "id": "q-001",
   "category": "direct_lookup",
   "question": "...",
-  "selected_documents": ["document-id"],
-  "ground_truth": "...",
-  "expected_sources": [{"document_id": "...", "page": 3}],
+   "selected_documents": ["document-a-id", "document-b-id", "document-c-id"],
+   "ground_truth": "...",
+   "expected_sources": [{"document_id": "document-c-id", "page": 3}],
   "reference_contexts": [],
   "conversation": []
 }
 ```
 
-   Generate 1-20 cases, with 3 as the default, across direct lookup,
+   `selected_documents` is the complete retrieval scope and must never be
+   derived from `expected_sources`. Generate 1-16 cases, with 12 as the default, across direct lookup,
    multi-hop, cross-section, table/list extraction, ambiguous, no-answer, and
    multi-turn questions when the document evidence supports them. Generate in
    batches of at most 5 requests and apply a delay between Gemini requests.
@@ -203,7 +204,7 @@ based on observed failures.
 
 ```text
 dense candidates  ----\
-                       -> RRF -> parent expansion -> optional rerank -> context
+                        -> RRF -> optional child rerank -> parent expansion -> context
 BM25 candidates   ----/
 ```
 
@@ -215,10 +216,10 @@ BM25 candidates   ----/
 6. Use evaluation results to tune only the necessary layer:
 
 ```text
-low context recall   -> candidate count, parent expansion, or chunking
-low context precision -> filtering, fusion, or reranking
-low faithfulness     -> grounding prompt and evidence threshold
-low answer relevance -> prompt structure and conversation context
+    low document recall -> candidate count, parent expansion, or chunking
+    low citation precision -> filtering, fusion, or reranking
+    low evidence support -> grounding prompt and evidence threshold
+    low answer token F1 -> prompt structure and conversation context
 ```
 
 7. Preserve explicit no-evidence behavior: when the selected documents do not
@@ -246,7 +247,7 @@ low answer relevance -> prompt structure and conversation context
 - The worst retrieval and generation failures have been manually inspected.
 - Candidate limits and no-evidence behavior are tested.
 - At least one targeted improvement is justified by evaluation results.
-- Dense-only versus parallel hybrid strategies can be compared without code edits or regenerating the dataset.
+- Dense-only versus hybrid strategies can be compared without code edits or regenerating the dataset.
 - Returned citations match the evidence page/page range in the evaluation data.
 - The README reports known quality and scalability tradeoffs honestly.
 
@@ -255,8 +256,8 @@ low answer relevance -> prompt structure and conversation context
 The RAG explanation becomes:
 
 ```text
-dense Qdrant search + independent lexical BM25 -> rank fusion -> parent expansion
--> optional reranking -> context budget -> grounded Gemini answer
+dense Qdrant search + independent lexical BM25 -> rank fusion -> optional child
+reranking -> parent expansion -> context budget -> grounded Gemini answer
 ```
 
 The project can discuss quality using measurements instead of claiming that
@@ -283,8 +284,9 @@ generation, citations, authentication, and SSE behavior unchanged.
    adapter that is imported only by the evaluation CLI. LangSmith must not be
    enabled for production chat tracing by default.
 2. Support either of these dataset inputs:
-   - Generate three to five validated cases from two or three uploaded READY
-     PDF/TXT documents, in batches of at most five.
+   - Generate twelve validated cases, including approximately ten answerable and
+     two no-answer cases, from two or three uploaded READY PDF/TXT documents, in
+     batches of at most five.
    - Load a developer-supplied JSONL dataset with verified answers, document IDs,
      page ranges, reference contexts, and optional conversation history.
 3. Sync each dataset to LangSmith using a content fingerprint and stable example
@@ -295,16 +297,20 @@ generation, citations, authentication, and SSE behavior unchanged.
    controlled change at a time: chunk size, number of retrieved chunks, top-k,
    parent expansion, fusion, reranking, prompt, or model. Retrieval-only runs
    must not consume answer-generation quota.
-5. Upload one sequential LangSmith experiment for the selected profile. Use
-   deterministic custom evaluators for context precision, context recall,
-   faithfulness, and answer relevancy so experiments do not consume additional
-   Gemini or embedding quota. Preserve local retrieval metrics and latency in
-   the saved result JSON.
-6. Bound provider use for the supplied quotas: default to three generated cases,
+5. Screen all four profiles on retrieval-only metrics, retain the top two, and
+   evaluate answers only for those two. Do not automatically crown a winner;
+   the final choice considers answer quality, citations, retrieval quality,
+   failure modes, and latency.
+6. Upload one sequential LangSmith experiment per top-two profile. Use
+   deterministic custom evaluators for document recall, citations, answer token
+   F1, evidence support, and no-answer correctness so experiments do not consume
+   additional Gemini or embedding quota. Preserve local retrieval metrics and
+   latency in the saved result JSON.
+7. Bound provider use for the supplied quotas: default to twelve generated cases,
    sequential Gemini requests, a configurable delay, cached query embeddings,
    and a `--case-limit` for answer/evaluation calls. Do not add an LLM judge
    that would consume the very small Gemini 3.5 Flash daily quota.
-7. Document the exact package removal, LangSmith key setup, first run, repeat
+8. Document the exact package removal, LangSmith key setup, first run, repeat
    run, and replacement-document reset procedure. Record the LangSmith dataset
    and experiment identifiers in local results.
 
@@ -314,8 +320,8 @@ generation, citations, authentication, and SSE behavior unchanged.
   backend code and requirements.
 - A generated or supplied JSONL dataset can be reused across unlimited
   retrieval experiments without regeneration.
-- LangSmith stores the dataset and each selected-strategy experiment, while
-  local JSON results retain cases, configurations, metrics, and latency.
+- LangSmith stores the dataset and each top-two strategy experiment, while local
+  JSON results retain cases, configurations, metrics, and latency.
 - `--case-limit` and sequential delays keep default Gemini use within the
   supplied quotas; retrieval-only mode makes no answer calls.
 - `--reset` supports a new document set without changing production data or
@@ -325,7 +331,7 @@ generation, citations, authentication, and SSE behavior unchanged.
 
 ### Developer Gate
 
-After Phase 3, the developer performs these manual steps exactly:
+After Phase 3, the developer performs the steps in `FINAL_MANUAL_STEPS.md` exactly:
 
 1. In the project virtual environment, run `python -m pip uninstall -y ragas datasets openai`.
 2. If `openai` is needed by another project in that environment, do not remove
@@ -336,7 +342,7 @@ After Phase 3, the developer performs these manual steps exactly:
 5. Start PostgreSQL, Redis, Qdrant, the API, worker, publisher, and frontend.
 6. Register/log in, upload two or three PDF/TXT documents, and wait for `READY`.
 7. Run `python -m app.evaluation.cli --user-id UUID --auto --langsmith --document-id ID1 --document-id ID2`.
-8. Open the printed LangSmith experiment, inspect the local JSON result, and
+8. Open both printed LangSmith experiments, inspect the local JSON result, and
    verify the generated questions, answers, citations, and scores.
 9. Change one retrieval setting, rerun with the saved JSONL dataset, and confirm
    a second experiment uses the same dataset.
