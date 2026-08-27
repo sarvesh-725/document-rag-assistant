@@ -116,6 +116,9 @@ class Settings:
         self.evaluation_request_delay_seconds = self._positive_float(
             "EVALUATION_REQUEST_DELAY_SECONDS", 5.0
         )
+        self.evaluation_cohere_min_interval_seconds = self._positive_float(
+            "EVALUATION_COHERE_MIN_INTERVAL_SECONDS", 7.0
+        )
         self.evaluation_case_limit = self._bounded_int(
             "EVALUATION_CASE_LIMIT", 12, minimum=1, maximum=12
         )

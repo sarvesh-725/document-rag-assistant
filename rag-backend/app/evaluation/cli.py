@@ -31,7 +31,12 @@ from app.services.context_builder import ContextBuilder as PromptContextBuilder
 from app.services.document_selection import resolve_selected_documents
 from app.services.gemini_generation import GeminiAnswerStreamer
 from app.services.intent_classifier import classify_intent
-from app.services.retrieval import HybridRetriever, has_sufficient_evidence
+from app.services.retrieval import (
+    AsyncRateLimiter,
+    HybridRetriever,
+    Reranker,
+    has_sufficient_evidence,
+)
 from app.services import rag_engine
 
 
@@ -134,9 +139,16 @@ async def _run_strategy(
     langsmith_limit: int | None = None,
     langsmith_dataset: str | None = None,
     reset: bool = False,
+    rerank_rate_limiter: AsyncRateLimiter | None = None,
+    reranker: Reranker | None = None,
     request_delay: float = 0.0,
 ) -> dict:
-    retriever = HybridRetriever(strategy=strategy, embeddings=embeddings)
+    retriever = HybridRetriever(
+        strategy=strategy,
+        embeddings=embeddings,
+        rerank_rate_limiter=rerank_rate_limiter,
+        reranker=reranker if strategy.reranker else None,
+    )
     prompt_builder = PromptContextBuilder()
     streamer = GeminiAnswerStreamer()
     cases: list[dict] = []
@@ -371,6 +383,10 @@ async def _run(args: argparse.Namespace) -> None:
 
     results = {}
     embedding_cache = QueryEmbeddingCache()
+    rerank_rate_limiter = AsyncRateLimiter(
+        settings.evaluation_cohere_min_interval_seconds
+    )
+    reranker = Reranker(rate_limiter=rerank_rate_limiter)
     try:
         for name in names:
             evaluation_samples = (
@@ -387,6 +403,8 @@ async def _run(args: argparse.Namespace) -> None:
                 embeddings=embedding_cache,
                 langsmith_dataset=args.langsmith_dataset,
                 reset=args.reset,
+                rerank_rate_limiter=rerank_rate_limiter,
+                reranker=reranker,
                 request_delay=settings.evaluation_request_delay_seconds,
             )
         if args.auto:
@@ -408,6 +426,8 @@ async def _run(args: argparse.Namespace) -> None:
                     langsmith_limit=len(answer_samples),
                     langsmith_dataset=args.langsmith_dataset,
                     reset=args.reset and index == 0,
+                    rerank_rate_limiter=rerank_rate_limiter,
+                    reranker=reranker,
                     request_delay=settings.evaluation_request_delay_seconds,
                 )
             results = {

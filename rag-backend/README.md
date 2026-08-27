@@ -37,6 +37,11 @@ generation, then applies application-side RRF, optional Cohere child reranking,
 deterministic parent expansion/deduplication, and a bounded context budget.
 Qdrant-native sparse retrieval is a future scaling option, not part of this MVP.
 
+Live retrieval configuration belongs in `rag-backend/.env` and is centralized
+in `app/config.py` (`DENSE_TOP_K`, `BM25_TOP_K`, `RRF_K`, `RERANK_TOP_K`,
+`RERANK_THRESHOLD`, `FINAL_CANDIDATE_COUNT`, and `COHERE_API_KEY`). The file
+`evaluation/strategies.json` affects evaluation profiles only.
+
 ## Operational Endpoints
 
 - `GET http://localhost:8000/health` checks API liveness.

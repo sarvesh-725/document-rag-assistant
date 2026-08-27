@@ -28,6 +28,7 @@ EVALUATION_SAMPLE_COUNT=12
 EVALUATION_BATCH_SIZE=4
 EVALUATION_CASE_LIMIT=12
 EVALUATION_REQUEST_DELAY_SECONDS=5
+EVALUATION_COHERE_MIN_INTERVAL_SECONDS=7
 ```
 
 4. Start PostgreSQL, Redis, Qdrant, the API, Taskiq worker, outbox publisher,
@@ -56,3 +57,24 @@ python -m app.evaluation.cli --user-id UUID --auto --langsmith --document-id ID1
     multi-turn chat, chitchat, deletion, retry, duplicate request, and logout.
 12. After this final test, Phase 4 is complete and no further feature work is
     planned.
+
+## Production Configuration
+
+Change live RAG behavior in `rag-backend/.env`, which is read by
+`app/config.py`. The main production retrieval settings are:
+
+```text
+DENSE_TOP_K
+BM25_TOP_K
+BM25_SCAN_LIMIT
+RRF_K
+RERANK_TOP_K
+RERANK_THRESHOLD
+FINAL_CANDIDATE_COUNT
+COHERE_API_KEY
+RERANKER_MODEL
+```
+
+`evaluation/strategies.json` changes evaluation profiles only. Evaluation-only
+settings such as `EVALUATION_CASE_LIMIT` and
+`EVALUATION_COHERE_MIN_INTERVAL_SECONDS` do not change production behavior.

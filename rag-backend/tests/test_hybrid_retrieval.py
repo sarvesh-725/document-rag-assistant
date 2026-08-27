@@ -10,6 +10,7 @@ from app.services.retrieval import (
     ContextBuilder,
     DenseRetriever,
     HybridRetriever,
+    AsyncRateLimiter,
     InMemoryRetrievalEvaluationHook,
     RetrievalCandidate,
     RetrievalConfig,
@@ -262,3 +263,27 @@ async def test_cohere_failure_falls_back_to_fusion_order_and_increments_metric(m
 
     assert [item.chunk_id for item in results] == ["2", "1"]
     assert retrieval.reranker_failure_count == before + 1
+
+
+@pytest.mark.asyncio
+async def test_reranker_rate_limit_cooldown_stops_repeated_provider_calls():
+    class TrialRateLimit(Exception):
+        status_code = 429
+
+    class BrokenCohere:
+        def __init__(self):
+            self.calls = 0
+
+        async def rerank(self, **kwargs):
+            self.calls += 1
+            raise TrialRateLimit()
+
+    client = BrokenCohere()
+    limiter = AsyncRateLimiter(0.001)
+    reranker = Reranker(client=client, rate_limiter=limiter)
+    items = [candidate("1", "one")]
+
+    await reranker.rerank("query", items)
+    await reranker.rerank("query", items)
+
+    assert client.calls == 1

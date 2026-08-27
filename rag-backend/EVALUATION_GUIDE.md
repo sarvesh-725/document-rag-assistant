@@ -96,6 +96,8 @@ Retrieval-only runs still use every row in the saved dataset. Change global limi
 - Answer generation is sequential for the top two profiles and skips no-answer
   cases.
 - Query embeddings are cached across profile comparisons.
+- Cohere reranking is serialized with a 7-second minimum interval and enters a
+  60-second fallback cooldown after a 429.
 - LangSmith evaluators are deterministic and make no Gemini or embedding calls.
 - Keep `EVALUATION_REQUEST_DELAY_SECONDS` at 5 or increase it after a 429. For
   the supplied limits, do not run multiple evaluations concurrently.

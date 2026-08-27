@@ -12,6 +12,7 @@ import re
 import uuid
 import logging
 import time
+import asyncio
 from asyncio import gather
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional, Protocol, Sequence
@@ -371,11 +372,45 @@ class ParentExpander:
 reranker_failure_count = 0
 
 
+class AsyncRateLimiter:
+    """Serialize optional provider calls with a minimum interval and cooldown."""
+
+    def __init__(self, min_interval_seconds: float):
+        if min_interval_seconds <= 0:
+            raise ValueError("min_interval_seconds must be positive")
+        self.min_interval_seconds = min_interval_seconds
+        self._lock = asyncio.Lock()
+        self._last_request = 0.0
+        self._blocked_until = 0.0
+
+    async def acquire(self) -> bool:
+        async with self._lock:
+            now = time.monotonic()
+            if now < self._blocked_until:
+                return False
+            wait = self.min_interval_seconds - (now - self._last_request)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request = time.monotonic()
+            return True
+
+    async def cooldown(self, seconds: float) -> None:
+        async with self._lock:
+            self._blocked_until = max(self._blocked_until, time.monotonic() + seconds)
+
+
 class Reranker:
     """Rerank fused candidates with Cohere when configured, otherwise lexical fallback."""
 
-    def __init__(self, client=None, model: Optional[str] = None):
+    def __init__(
+        self,
+        client=None,
+        model: Optional[str] = None,
+        rate_limiter: Optional[AsyncRateLimiter] = None,
+    ):
         self.client = client
+        self.rate_limiter = rate_limiter
+        self._cache: dict[tuple[str, tuple[str, ...]], list[RetrievalCandidate]] = {}
         settings = get_settings()
         self.model = model or settings.reranker_model
         if self.client is None and settings.cohere_api_key:
@@ -389,13 +424,20 @@ class Reranker:
     async def rerank(self, query: str, candidates: Sequence[RetrievalCandidate]) -> list[RetrievalCandidate]:
         if not candidates:
             return []
+        cache_key = (query, tuple(candidate.identity for candidate in candidates))
+        if cache_key in self._cache:
+            return [replace(candidate) for candidate in self._cache[cache_key]]
         if self.client is None:
             ordered = sorted(
                 candidates,
                 key=lambda candidate: candidate.fusion_score or 0.0,
                 reverse=True,
             )
-            return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
+            result = [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
+            self._cache[cache_key] = result
+            return [replace(candidate) for candidate in result]
+        if self.rate_limiter is not None and not await self.rate_limiter.acquire():
+            return self._fusion_fallback(candidates)
         try:
             started = time.perf_counter()
             result = await self.client.rerank(
@@ -414,18 +456,31 @@ class Reranker:
                 reverse=True,
             )
             metrics.observe("rerank_latency", time.perf_counter() - started)
-            return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
-        except Exception:
+            result = [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
+            self._cache[cache_key] = result
+            return [replace(candidate) for candidate in result]
+        except Exception as exc:
             global reranker_failure_count
             reranker_failure_count += 1
             metrics.increment("reranker_failure_rate")
-            logger.exception("Cohere reranking failed; using fusion-ranked candidates")
-            ordered = sorted(
-                candidates,
-                key=lambda candidate: candidate.fusion_score or 0.0,
-                reverse=True,
-            )
-            return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
+            if getattr(exc, "status_code", None) == 429:
+                if self.rate_limiter is not None:
+                    await self.rate_limiter.cooldown(60.0)
+                logger.warning(
+                    "Cohere reranking rate limit reached; using fusion-ranked candidates"
+                )
+            else:
+                logger.exception("Cohere reranking failed; using fusion-ranked candidates")
+            return self._fusion_fallback(candidates)
+
+    @staticmethod
+    def _fusion_fallback(candidates: Sequence[RetrievalCandidate]) -> list[RetrievalCandidate]:
+        ordered = sorted(
+            candidates,
+            key=lambda candidate: candidate.fusion_score or 0.0,
+            reverse=True,
+        )
+        return [replace(candidate, rerank_rank=rank) for rank, candidate in enumerate(ordered, 1)]
 
 
 @dataclass(frozen=True)
@@ -516,6 +571,7 @@ class HybridRetriever:
         evaluation_hook: Optional[RetrievalEvaluationHook] = None,
         strategy: Any = None,
         embeddings: Any = None,
+        rerank_rate_limiter: Optional[AsyncRateLimiter] = None,
     ):
         config = RetrievalConfig.from_env()
         if strategy is not None:
@@ -534,7 +590,11 @@ class HybridRetriever:
         self.bm25 = bm25 or BM25Retriever(config=config)
         self.fusion = fusion or RetrievalFusion(config.rrf_k)
         self.parent_expander = parent_expander or (ParentExpander() if strategy is None or strategy.parent_expansion else None)
-        self.reranker = reranker or (Reranker() if strategy is None or strategy.reranker else None)
+        self.reranker = reranker or (
+            Reranker(rate_limiter=rerank_rate_limiter)
+            if strategy is None or strategy.reranker
+            else None
+        )
         self.context_builder = context_builder or ContextBuilder(config)
         self.evaluation_hook = evaluation_hook
 
