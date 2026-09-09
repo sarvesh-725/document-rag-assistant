@@ -46,3 +46,10 @@ requirements
 !/rag-backend/
 !/rag-frontend/
 !.gitignore
+# Documentation and scratch files
+*.md
+alembic/README
+use
+test_db.py
+test_intent.py
+test_models.py
